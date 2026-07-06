@@ -10,7 +10,7 @@ async function generateDalleImage(concept) {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) return null;
 
-  const prompt = `Simple clear educational diagram for year 7 students showing: ${concept}. Clean black and white illustration, clear labels in Swedish, no decorative elements, scientific accuracy required`;
+  const prompt = `Simple clear educational diagram for Swedish year 7 students showing: ${concept}. Clean black and white illustration, labeled in Swedish, scientific accuracy required, no decorative elements, no text except Swedish labels`;
 
   try {
     const res = await fetch(OPENAI_IMAGES_URL, {
@@ -34,7 +34,7 @@ async function generateDalleImage(concept) {
 
     return { url, credit: 'AI-genererad illustration (DALL-E 3)', creditLink: null, source: 'dalle' };
   } catch (e) {
-    console.warn('DALL-E-bildgenerering misslyckades:', e.message);
+    console.warn('[dalleImage] Bildgenerering misslyckades:', e.message);
     return null;
   }
 }

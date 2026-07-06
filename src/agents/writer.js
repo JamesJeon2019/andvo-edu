@@ -1,6 +1,5 @@
 const Anthropic = require('@anthropic-ai/sdk');
 const { detectGradeLevel, languageInstructionsFor } = require('./gradeLevel');
-const { resolveSceneImage } = require('./sceneImage');
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
@@ -16,9 +15,11 @@ const VOICE_STYLE_INSTR = `VOICE_TEXT STYLE (STRICT):
   Examples (Swedish): "H2O" → "H två O", "Na⁺" → "Na plus", "CO2" → "C O två", "2H2 + O2" → "två H två plus O två".
   Examples (English): "H2O" → "H two O", "Na⁺" → "Na plus".`;
 
-const IMAGE_QUERY_INSTR = `IMAGE_SEARCH_QUERY (STRICT):
-- For each scene, also write image_search_query: 3-5 ENGLISH words — the best Google Image Search query for a simple educational diagram that shows exactly the SCIENTIFIC CONCEPT this scene is teaching.
-- If voice_text uses an everyday metaphor or analogy (e.g. friends, candy, a football team, a rope), image_search_query must describe the real scientific concept being taught, never the metaphor itself. Example: voice_text uses "two friends sharing candy" to explain covalent bonding → image_search_query is "covalent bond electron sharing diagram", not "friends candy".
+const IMAGE_FIELDS_INSTR = `IMAGE FIELDS (STRICT):
+- For each scene, also write two fields:
+  - image_search_query: 3-5 ENGLISH words — the best Google Image Search query for a simple educational diagram that shows exactly the SCIENTIFIC CONCEPT this scene is teaching.
+  - image_concept: ONE sentence, written in the lesson language, describing exactly what a correct image should show for this scene. This is shown directly to students as placeholder text if no matching image is found, so it must read naturally in the lesson language — not a translated search query.
+- If voice_text uses an everyday metaphor or analogy (e.g. friends, candy, a football team, a rope), BOTH fields must describe the real scientific concept being taught, never the metaphor itself. Example: voice_text uses "two friends sharing candy" to explain covalent bonding → image_search_query is "covalent bond electron sharing diagram" (English), image_concept describes "two atoms sharing an electron pair to form a covalent bond" in the lesson language, not "friends candy".
 - Never university- or research-level terms — this is for a 13-15 year old.
 - Black-and-white diagrams and sketches are perfectly fine — accuracy beats color or decoration.`;
 
@@ -50,14 +51,15 @@ ${langInstr}
 
 ${VOICE_STYLE_INSTR}
 
-${IMAGE_QUERY_INSTR}
+${IMAGE_FIELDS_INSTR}
 
 Return ONLY JSON:
 {
   "scenes": [
     {
       "voice_text": "the scene's text in the lesson language — this is exactly what is both shown on screen and spoken aloud",
-      "image_search_query": "3-5 ENGLISH words, see IMAGE_SEARCH_QUERY rules above",
+      "image_search_query": "3-5 ENGLISH words, see IMAGE FIELDS rules above",
+      "image_concept": "one sentence in the lesson language, see IMAGE FIELDS rules above",
       "emphasis": false
     }
   ]
@@ -68,7 +70,7 @@ Rules:
 - First scene is a short "hook", 1 sentence to grab attention (emphasis: false)
 - Exactly one scene is the block's main idea, mark it "emphasis": true
 - The rest are explanation scenes. ${sceneLenRule}
-- Each scene's image_search_query must match that scene's own voice_text, not the whole block`;
+- Each scene's image_search_query and image_concept must match that scene's own voice_text, not the whole block`;
 
   } else if (block.type === 'task') {
     prompt = `You are a ${lessonContext.subject} teacher. Write a lesson task as narrated scenes.
@@ -83,13 +85,13 @@ ${langInstr}
 
 ${VOICE_STYLE_INSTR}
 
-${IMAGE_QUERY_INSTR}
+${IMAGE_FIELDS_INSTR}
 
 Return ONLY JSON:
 {
   "scenes": [
-    { "voice_text": "short explanation of what to do", "image_search_query": "3-5 English words, see IMAGE_SEARCH_QUERY rules above", "emphasis": false },
-    { "voice_text": "the actual task for the student (can be multi-line)", "image_search_query": "3-5 English words, see IMAGE_SEARCH_QUERY rules above", "emphasis": true }
+    { "voice_text": "short explanation of what to do", "image_search_query": "3-5 English words, see IMAGE FIELDS rules above", "image_concept": "one sentence in the lesson language, see IMAGE FIELDS rules above", "emphasis": false },
+    { "voice_text": "the actual task for the student (can be multi-line)", "image_search_query": "3-5 English words, see IMAGE FIELDS rules above", "image_concept": "one sentence in the lesson language, see IMAGE FIELDS rules above", "emphasis": true }
   ],
   "hint": "a hint (optional, can be null)"
 }
@@ -97,7 +99,7 @@ Return ONLY JSON:
 Rules:
 - Exactly 2 scenes: (1) explanation, (2) the task itself with "emphasis": true
 - ${sceneLenRule}
-- Each scene's image_search_query must match that specific scene's content`;
+- Each scene's image_search_query and image_concept must match that specific scene's content`;
 
   } else if (block.type === 'test') {
     prompt = `You are a ${lessonContext.subject} teacher. Create review questions as narrated scenes — one scene = one question.
@@ -109,19 +111,19 @@ ${langInstr}
 
 ${VOICE_STYLE_INSTR}
 
-${IMAGE_QUERY_INSTR}
+${IMAGE_FIELDS_INSTR}
 
 Return ONLY JSON:
 {
   "scenes": [
-    { "voice_text": "1. Full question text, starting with its number?", "image_search_query": "3-5 English words for this question's topic, see IMAGE_SEARCH_QUERY rules above", "emphasis": false }
+    { "voice_text": "1. Full question text, starting with its number?", "image_search_query": "3-5 English words for this question's topic, see IMAGE FIELDS rules above", "image_concept": "one sentence in the lesson language, see IMAGE FIELDS rules above", "emphasis": false }
   ]
 }
 
 Rules:
 - 3-5 scenes, one scene = one question
 - Each voice_text must start with the question number, e.g. "1. ..."
-- image_search_query must match this specific question's topic, not the whole test`;
+- image_search_query and image_concept must match this specific question's topic, not the whole test`;
 
   } else if (block.type === 'video') {
     // Minimalt innehåll för video-block — läraren väljer/klistrar in länken själv
@@ -153,25 +155,10 @@ Rules:
   const clean = text.replace(/```json|```/g, '').trim();
   const content = JSON.parse(clean);
 
-  // Bildupplösning sker HÄR, en gång per scen, under genereringen — Google
-  // Custom Search + Claude Vision-relevanskontroll + DALL-E-reserv (se
-  // sceneImage.js). Klienten gör inga egna bild-API-anrop; scene JSON
-  // innehåller redan slutgiltig image (eller image_concept för platshållaren).
-  if (Array.isArray(content.scenes) && content.scenes.length) {
-    for (const scene of content.scenes) {
-      const resolved = await resolveSceneImage({
-        voice_text: scene.voice_text,
-        image_search_query: scene.image_search_query
-      });
-      if (resolved.found) {
-        scene.image = resolved.image;
-      } else {
-        scene.image = null;
-        scene.image_concept = resolved.summary || null;
-      }
-    }
-  }
-
+  // Ingen bildhämtning sker här — bara image_search_query och image_concept
+  // skrivs till scenen. Lektionen returneras direkt; bilderna laddas
+  // progressivt i bakgrunden av klienten via GET /api/image/search (se
+  // src/routes/image.js), en scen i taget, EFTER att lektionen redan visas.
   return { ...block, content };
 }
 

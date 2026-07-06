@@ -1,44 +1,48 @@
 const { searchGoogleImages } = require('./googleImageSearch');
 const { generateDalleImage } = require('./dalleImage');
-const { verifyImageRelevance, summarizeConcept } = require('./visualPicker');
+const { verifyImageRelevance } = require('./visualPicker');
 
 // Max antal Google-kandidater vi provar Claude Vision på innan vi ger upp och
 // går vidare till DALL-E — enligt spec.
 const MAX_ATTEMPTS = 3;
 
 /**
- * SCENE IMAGE — hela bildupplösningen för en scen: Google Custom Search (med
- * domänprioritering + Claude Vision-relevanskontroll, max 3 försök), sedan
- * DALL-E 3 som reserv, sedan en svensk sammanfattning som sista utväg för
- * platshållartext. Anropas av writer.js under lektionsgenereringen — körs
- * ALDRIG från klienten, så eleven/läraren gör inga egna bild-API-anrop.
+ * SCENE IMAGE — bildupplösningen för EN scen, anropad on-demand av
+ * GET /api/image/search (src/routes/image.js) när klienten progressivt
+ * laddar bilder EFTER att lektionen redan visas. Körs aldrig under själva
+ * lektionsgenereringen (se writer.js) — bara sökfrågan/konceptet skrivs där.
+ *
+ * Ordning: Google Custom Search (max 3 kandidater, Claude Vision-
+ * relevanskontroll) → DALL-E 3-reserv → null (klienten visar då
+ * image_concept-texten den redan har).
  */
-async function resolveSceneImage({ voice_text, image_search_query }) {
-  const concept = (image_search_query || voice_text || '').trim();
+async function resolveSceneImage({ query, concept }) {
+  const searchQuery = (query || concept || '').trim();
+  const matchConcept = (concept || query || '').trim();
 
-  if (concept) {
-    const candidates = await searchGoogleImages(concept);
-    for (const candidate of candidates.slice(0, MAX_ATTEMPTS)) {
-      const isMatch = await verifyImageRelevance({ image_url: candidate.url, concept });
-      if (isMatch) {
-        return {
-          found: true,
-          image: {
-            url: candidate.url,
-            credit: candidate.displayLink || 'Google-bildsökning',
-            creditLink: candidate.contextLink,
-            source: 'google'
-          }
-        };
-      }
-    }
-
-    const dalle = await generateDalleImage(concept);
-    if (dalle) return { found: true, image: dalle };
+  if (!searchQuery) {
+    console.warn('[sceneImage] Ingen sökfråga att lösa bild för.');
+    return { found: false, image: null };
   }
 
-  const summary = await summarizeConcept({ voice_text }).catch(() => null);
-  return { found: false, summary };
+  const candidates = await searchGoogleImages(searchQuery);
+  console.log(`[sceneImage] "${searchQuery}" — ${candidates.length} kandidat(er) hittades`);
+
+  for (const candidate of candidates.slice(0, MAX_ATTEMPTS)) {
+    const isMatch = await verifyImageRelevance({ image_url: candidate.url, concept: matchConcept });
+    console.log(`[sceneImage] Vision-kontroll "${matchConcept}" mot ${candidate.url} → ${isMatch ? 'JA' : 'NEJ'}`);
+    if (isMatch) return { found: true, image: candidate };
+  }
+
+  console.log(`[sceneImage] "${searchQuery}" — ingen godkänd Google-bild, provar DALL-E`);
+  const dalle = await generateDalleImage(matchConcept);
+  if (dalle) {
+    console.log(`[sceneImage] "${searchQuery}" — DALL-E lyckades`);
+    return { found: true, image: dalle };
+  }
+
+  console.warn(`[sceneImage] "${searchQuery}" — DALL-E misslyckades eller ej konfigurerad`);
+  return { found: false, image: null };
 }
 
 module.exports = { resolveSceneImage };

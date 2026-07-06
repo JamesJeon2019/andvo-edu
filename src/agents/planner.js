@@ -75,6 +75,7 @@ Return ONLY valid JSON, no markdown, no explanations:
 
 Rules:
 - Alternate block types: lecture → video/task → lecture → task → test
+- REQUIRED: the plan MUST include exactly one block of type "video", regardless of student level. Never omit it for the "weak"/basic level — visual, moving demonstrations are especially important for weaker students, not optional extras.
 - The sum of all block durations must equal ${duration} minutes
 - Minimum 5 blocks, maximum 8
 - Stay strictly within ${subject} — every block must teach ${subject} content. Do not drift into other subjects, even as analogies for block topics (analogies inside the explanations themselves are fine, see language rules above)
@@ -90,7 +91,46 @@ Rules:
   const clean = text.replace(/```json|```/g, '').trim();
   const plan = JSON.parse(clean);
 
-  return { ...plan, gradeLevel };
+  return { ...ensureVideoBlock(plan, { topic, language }), gradeLevel };
+}
+
+/**
+ * Säkerställer att planen alltid har exakt ett video-block, oavsett elevnivå.
+ * Claude följer oftast prompten (se REQUIRED-regeln ovan), men video är för
+ * viktigt för svagare elever för att lita enbart på prompt-efterlevnad — om
+ * Claude ändå skulle utelämna det, lägger vi till ett själva.
+ */
+function ensureVideoBlock(plan, { topic, language }) {
+  if (!Array.isArray(plan.blocks) || plan.blocks.some(b => b.type === 'video')) return plan;
+
+  const maxId = plan.blocks.reduce((max, b) => Math.max(max, b.id || 0), 0);
+  const videoBlock = language === 'en'
+    ? {
+        id: maxId + 1,
+        type: 'video',
+        title: `Watch: ${topic}`,
+        duration: 5,
+        description: `A short video demonstrating ${topic}.`,
+        youtube_query: topic,
+        youtube_url: null,
+        visible: true
+      }
+    : {
+        id: maxId + 1,
+        type: 'video',
+        title: `Se en video om: ${topic}`,
+        duration: 5,
+        description: `En kort video som visar ${topic}.`,
+        youtube_query: topic,
+        youtube_url: null,
+        visible: true
+      };
+
+  // Sätts in efter det första blocket (oftast en lecture) så videon kommer
+  // tidigt i lektionen, inte sist.
+  const blocks = [...plan.blocks];
+  blocks.splice(Math.min(1, blocks.length), 0, videoBlock);
+  return { ...plan, blocks };
 }
 
 module.exports = { planLesson };

@@ -23,22 +23,26 @@ async function searchGoogleImages(query, { num = 5 } = {}) {
   try {
     const url = `${GOOGLE_SEARCH_BASE}?key=${apiKey}&cx=${cx}&q=${encodeURIComponent(query)}&searchType=image&safe=active&num=${num}&imgType=clipart&imgColorType=mono`;
     const res = await fetch(url);
-    if (!res.ok) throw new Error(`Google Custom Search svarade ${res.status}`);
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      throw new Error(`Google Custom Search svarade ${res.status}${body ? ` — ${body.slice(0, 300)}` : ''}`);
+    }
     const data = await res.json();
 
     const items = (data.items || [])
       .map(it => ({
         url: it.link,
-        title: it.title || '',
-        displayLink: it.displayLink || '',
-        contextLink: (it.image && it.image.contextLink) || it.link
+        credit: it.displayLink || 'Google-bildsökning',
+        creditLink: (it.image && it.image.contextLink) || it.link,
+        source: 'google'
       }))
       .filter(img => img.url);
 
-    items.sort((a, b) => domainRank(a.displayLink) - domainRank(b.displayLink));
+    items.sort((a, b) => domainRank(a.credit) - domainRank(b.credit));
+    console.log(`[googleImageSearch] "${query}" → ${items.length} kandidat(er)`);
     return items;
   } catch (e) {
-    console.warn('Google-bildsökning misslyckades:', e.message);
+    console.warn('[googleImageSearch] Sökning misslyckades:', e.message);
     return [];
   }
 }

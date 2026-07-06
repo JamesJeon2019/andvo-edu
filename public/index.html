@@ -151,9 +151,24 @@
   .tw{transition:background .15s,color .15s;border-radius:3px;padding:0 1px;}
   .tw.tts-highlight{background:rgba(108,143,255,.4);color:#fff;}
 
-  /* ── Bilder (Google-bildsökning + DALL-E-reserv, redan upplösta av servern) ── */
+  /* ── Bilder (Google-bildsökning + Claude Vision + DALL-E-reserv, laddas progressivt) ── */
   .img-credit{position:absolute;bottom:0;right:0;background:rgba(0,0,0,.6);color:#fff;font-size:10px;padding:3px 9px;border-radius:8px 0 0 0;}
   .img-credit a{color:#fff;}
+  .img-skeleton{width:100%;height:180px;background:var(--surface2);animation:pulseGrey 1.6s ease-in-out infinite;}
+  @keyframes pulseGrey{0%,100%{opacity:.55}50%{opacity:1}}
+  .scene-media img.img-fade-in{animation:imgFadeIn .4s ease;}
+  @keyframes imgFadeIn{from{opacity:0}to{opacity:1}}
+  .scene-img-controls{display:flex;gap:6px;flex-wrap:wrap;padding:8px 10px;background:var(--surface2);}
+  .scene-img-controls .abtn{font-size:11px;padding:4px 9px;}
+  .scene-img-paste{display:flex;gap:6px;flex:1;min-width:200px;}
+  .scene-img-paste input{min-height:auto;padding:6px 9px;font-size:12px;}
+
+  /* ── Bildladdningsindikator (progressiv laddning i bakgrunden) ── */
+  .img-progress-bar{display:flex;align-items:center;gap:12px;padding:8px 16px;background:var(--surface2);border-bottom:1px solid var(--border);font-size:12px;color:var(--muted);}
+  .img-progress-track{flex:0 0 160px;height:6px;background:var(--bg);border-radius:3px;overflow:hidden;}
+  .img-progress-fill{height:100%;width:0;background:var(--accent);transition:width .3s ease;}
+  .img-progress-text{white-space:nowrap;}
+  .img-progress-stop{margin-left:auto;}
 
   /* ── Scener (röst + bild per scen) ── */
   .scene-list{display:flex;flex-direction:column;gap:16px;margin-top:4px;}
@@ -220,9 +235,8 @@
   <div class="load-steps">
     <div class="lstep" id="ls1"><div class="lstep-dot"></div>Planner: skapar lektionsplan</div>
     <div class="lstep" id="ls2"><div class="lstep-dot"></div>Writer: genererar innehåll</div>
-    <div class="lstep" id="ls3"><div class="lstep-dot"></div>Bilder: hämtar illustrationer</div>
-    <div class="lstep" id="ls4"><div class="lstep-dot"></div>Checker: kontrollerar fakta</div>
-    <div class="lstep" id="ls5"><div class="lstep-dot"></div>Formaterar lektion</div>
+    <div class="lstep" id="ls3"><div class="lstep-dot"></div>Checker: kontrollerar fakta</div>
+    <div class="lstep" id="ls4"><div class="lstep-dot"></div>Formaterar lektion</div>
   </div>
 </div>
 
@@ -237,6 +251,12 @@
       <button class="hbtn" onclick="backToSetup()">← Ny lektion</button>
       <button class="hbtn pr" onclick="alert('Elevvy kommer snart!')">👁 Elevvy →</button>
     </div>
+  </div>
+
+  <div class="img-progress-bar" id="imgProgressBar" style="display:none;">
+    <span class="img-progress-text" id="imgProgressText">Hämtar bilder...</span>
+    <div class="img-progress-track"><div class="img-progress-fill" id="imgProgressFill"></div></div>
+    <button class="hbtn img-progress-stop" onclick="stopImageQueue()">⏹ Stoppa</button>
   </div>
 
   <div id="checkBar"></div>
@@ -448,7 +468,7 @@ function buildScenePlayer(idx, scenes, opts = {}) {
     sceneWordMaps[idx][si] = map;
     return `
     <div class="scene${sc.emphasis ? ' scene-emphasis' : ''}" id="scene${idx}_${si}">
-      <div class="scene-media" id="sceneMedia${idx}_${si}">${renderSceneMediaHtml(sc)}</div>
+      <div class="scene-media" id="sceneMedia${idx}_${si}">${renderSceneMediaHtml(sc, idx, si)}</div>
       <div class="scene-body">
         <button class="scene-play" onclick="playScene(${idx},${si})" title="Läs upp denna scen">▶</button>
         <div class="scene-text" id="sceneText${idx}_${si}">${html}</div>
@@ -559,31 +579,198 @@ function clearSceneHighlight(idx, si) {
   if (prev) prev.classList.remove('tts-highlight');
 }
 
-/* ══════════════════ BILDER — redan upplösta av servern vid generering ══════════════════ */
-// Google Custom Search, Claude Vision-relevanskontroll och DALL-E-reserv körs
-// alla server-side under lektionsgenereringen (se src/agents/sceneImage.js,
-// anropas från src/agents/writer.js) — varje scen har redan sc.image (eller
-// sc.image_concept för platshållaren) i lesson-JSON. Klienten gör inga egna
-// bild-API-anrop och behöver inte orkestrera något asynkront här.
+/* ══════════════════ BILDER — progressiv laddning i bakgrunden ══════════════════ */
+// Lektionen visas direkt med image_search_query/image_concept redan i scen-JSON
+// (skrivna av writer.js), men UTAN bilder. Klienten hämtar sedan varje scens
+// bild i tur och ordning via GET /api/image/search (Google Custom Search +
+// Claude Vision-relevanskontroll + DALL-E-reserv, se src/routes/image.js) —
+// lektionen behöver aldrig vänta på bilder för att visas.
 
 // Ämnesikon för platshållaren — appen omfattar bara dessa fyra vetenskapsämnen.
 const SUBJECT_ICON = { Kemi: '🧪', Biologi: '🧬', Fysik: '⚛️', Matematik: '📐' };
 
-// Bygger HTML för en scens media direkt från redan upplöst data i scen-JSON.
-// Ingen animation, ingen färgad bakgrund vid platshållare — en neutral yta
-// med vad scenen faktiskt handlar om.
-function renderSceneMediaHtml(sc) {
-  const img = sc.image;
-  if (img && img.url) {
-    const sourceLabel = img.source === 'dalle' ? 'DALL-E 3' : 'Google';
-    const credit = img.creditLink
-      ? `<div class="img-credit">${escapeHtml(img.credit)} · <a href="${img.creditLink}" target="_blank" rel="noopener">${sourceLabel}</a></div>`
-      : `<div class="img-credit">${escapeHtml(img.credit)}</div>`;
-    return `<img src="${img.url}" alt="" loading="lazy"/>${credit}`;
+let imgQueueTotal = 0, imgQueueDone = 0, imgQueueCancelled = false, imgAbortController = null;
+
+// Bygger HTML för en scens media utifrån dess NUVARANDE upplösningsstatus:
+// sc.image === undefined → ännu inte hämtad (skeleton), sc.image === null →
+// hämtning klar men ingen bild godkändes (platshållare med image_concept),
+// sc.image = {url,...} → laddad bild. Ingen animation eller färgad bakgrund
+// annat än den pulserande skeletten under själva laddningen.
+function renderSceneMediaHtml(sc, blockIdx, sceneIdx) {
+  if (sc.image === undefined) {
+    return `<div class="img-skeleton"></div>`;
   }
+
+  const controlsId = `sceneImgCtrl${blockIdx}_${sceneIdx}`;
+  const controls = `
+    <div class="scene-img-controls" id="${controlsId}">
+      <button class="abtn" onclick="searchNewImage(${blockIdx},${sceneIdx})">🔄 Sök ny bild</button>
+      <button class="abtn" onclick="showPasteLinkInput(${blockIdx},${sceneIdx})">✏️ Klistra in länk</button>
+      ${sc.image ? `<button class="abtn danger" onclick="removeSceneImage(${blockIdx},${sceneIdx})">✕ Ta bort</button>` : ''}
+    </div>`;
+
+  if (sc.image && sc.image.url) {
+    const sourceLabel = sc.image.source === 'dalle' ? 'DALL-E 3' : (sc.image.source === 'manual' ? 'Egen länk' : 'Google');
+    const credit = sc.image.creditLink
+      ? `<div class="img-credit">${escapeHtml(sc.image.credit)} · <a href="${sc.image.creditLink}" target="_blank" rel="noopener">${sourceLabel}</a></div>`
+      : (sc.image.credit ? `<div class="img-credit">${escapeHtml(sc.image.credit)}</div>` : '');
+    return `<img class="img-fade-in" src="${sc.image.url}" alt="" loading="lazy"/>${credit}${controls}`;
+  }
+
   const icon = SUBJECT_ICON[lesson.subject] || '📘';
-  const text = sc.image_concept || lesson.title || '';
-  return `<div class="visual-placeholder"><span class="vp-icon">${icon}</span><span class="vp-text">${escapeHtml(text)}</span></div>`;
+  const text = sc.image_concept || sc.voice_text || lesson.title || '';
+  return `<div class="visual-placeholder"><span class="vp-icon">${icon}</span><span class="vp-text">${escapeHtml(text)}</span></div>${controls}`;
+}
+
+// Ritar om EN scens media-yta om (och bara om) det blocket är det som visas
+// just nu — annars skulle vi röra DOM-element som inte längre finns kvar.
+function renderSceneMediaIfVisible(blockIdx, sceneIdx) {
+  if (currentBlockIdx !== blockIdx) return;
+  const media = document.getElementById(`sceneMedia${blockIdx}_${sceneIdx}`);
+  if (!media) return;
+  const scenes = getScenesForBlock(lesson.blocks[blockIdx], lesson.blocks[blockIdx].content || {});
+  const sc = scenes[sceneIdx];
+  if (!sc) return;
+  media.innerHTML = renderSceneMediaHtml(sc, blockIdx, sceneIdx);
+}
+
+// Hämtar bilden för EN scen från servern och sparar resultatet direkt i
+// lesson-objektet (så det finns kvar om läraren bläddrar bort och tillbaka).
+async function resolveAndRenderSceneImage(blockIdx, sceneIdx, scene) {
+  if (!scene.image_search_query) {
+    scene.image = null;
+    renderSceneMediaIfVisible(blockIdx, sceneIdx);
+    return;
+  }
+  try {
+    imgAbortController = new AbortController();
+    const params = new URLSearchParams({ q: scene.image_search_query, concept: scene.image_concept || '' });
+    const res = await fetch(`/api/image/search?${params.toString()}`, { signal: imgAbortController.signal });
+    const data = await res.json();
+    scene.image = (data && data.success && data.found) ? data.image : null;
+  } catch (e) {
+    if (e.name !== 'AbortError') console.warn('Bildhämtning misslyckades:', e.message);
+    if (scene.image === undefined) scene.image = null;
+  }
+  renderSceneMediaIfVisible(blockIdx, sceneIdx);
+}
+
+// Samlar ihop alla scener i hela lektionen som ännu inte har fått en
+// bildhämtning (sc.image === undefined) — video-block har inga scen-bilder
+// och tas aldrig med.
+function collectImageQueue() {
+  const queue = [];
+  lesson.blocks.forEach((b, bi) => {
+    if (!['lecture', 'task', 'test'].includes(b.type)) return;
+    const scenes = getScenesForBlock(b, b.content || {});
+    scenes.forEach((sc, si) => {
+      if (sc.image === undefined) queue.push({ blockIdx: bi, sceneIdx: si });
+    });
+  });
+  return queue;
+}
+
+function showImageProgress() {
+  const bar = document.getElementById('imgProgressBar');
+  if (bar) bar.style.display = 'flex';
+}
+
+function hideImageProgress() {
+  const bar = document.getElementById('imgProgressBar');
+  if (bar) bar.style.display = 'none';
+}
+
+function updateImageProgress() {
+  const text = document.getElementById('imgProgressText');
+  const fill = document.getElementById('imgProgressFill');
+  if (text) text.textContent = `Hämtar bilder... (${imgQueueDone} av ${imgQueueTotal} klara)`;
+  if (fill) fill.style.width = imgQueueTotal ? `${Math.round(imgQueueDone / imgQueueTotal * 100)}%` : '0%';
+}
+
+// Stoppar kön: avbryter en eventuell pågående hämtning och hindrar nästa
+// scen i kön från att starta. Redan laddade bilder behålls.
+function stopImageQueue() {
+  imgQueueCancelled = true;
+  if (imgAbortController) imgAbortController.abort();
+  hideImageProgress();
+}
+
+async function runImageQueue(queue, i) {
+  if (imgQueueCancelled || i >= queue.length) { hideImageProgress(); return; }
+  const { blockIdx, sceneIdx } = queue[i];
+  const scenes = getScenesForBlock(lesson.blocks[blockIdx], lesson.blocks[blockIdx].content || {});
+  const scene = scenes[sceneIdx];
+  await resolveAndRenderSceneImage(blockIdx, sceneIdx, scene);
+  imgQueueDone++;
+  updateImageProgress();
+  runImageQueue(queue, i + 1);
+}
+
+// Startas EN gång per genererad lektion (se renderEditor) — hämtar bilder
+// sekventiellt, en scen i taget, i bakgrunden medan läraren redan kan läsa
+// och bläddra i lektionen.
+function startImageQueue() {
+  const queue = collectImageQueue();
+  imgQueueTotal = queue.length;
+  imgQueueDone = 0;
+  imgQueueCancelled = false;
+  if (!queue.length) { hideImageProgress(); return; }
+  showImageProgress();
+  updateImageProgress();
+  runImageQueue(queue, 0);
+}
+
+// ── Bildkontroller: sök ny bild, klistra in egen länk, ta bort ──
+async function searchNewImage(blockIdx, sceneIdx) {
+  const scenes = getScenesForBlock(lesson.blocks[blockIdx], lesson.blocks[blockIdx].content || {});
+  const scene = scenes[sceneIdx];
+  if (!scene) return;
+  scene.image = undefined;
+  renderSceneMediaIfVisible(blockIdx, sceneIdx);
+  await resolveAndRenderSceneImage(blockIdx, sceneIdx, scene);
+}
+
+function showPasteLinkInput(blockIdx, sceneIdx) {
+  const ctrl = document.getElementById(`sceneImgCtrl${blockIdx}_${sceneIdx}`);
+  if (!ctrl) return;
+  ctrl.innerHTML = `
+    <div class="scene-img-paste">
+      <input type="text" id="pasteUrl${blockIdx}_${sceneIdx}" placeholder="Klistra in bildlänk..."/>
+      <button class="abtn" onclick="savePastedImage(${blockIdx},${sceneIdx})">💾 Spara</button>
+      <button class="abtn" onclick="renderSceneMediaIfVisible(${blockIdx},${sceneIdx})">Avbryt</button>
+    </div>`;
+}
+
+function savePastedImage(blockIdx, sceneIdx) {
+  const inp = document.getElementById(`pasteUrl${blockIdx}_${sceneIdx}`);
+  const url = inp ? inp.value.trim() : '';
+  if (!url) return;
+  const scenes = getScenesForBlock(lesson.blocks[blockIdx], lesson.blocks[blockIdx].content || {});
+  const scene = scenes[sceneIdx];
+  if (!scene) return;
+  scene.image = { url, credit: 'Manuellt tillagd bild', creditLink: null, source: 'manual' };
+  renderSceneMediaIfVisible(blockIdx, sceneIdx);
+}
+
+function removeSceneImage(blockIdx, sceneIdx) {
+  const scenes = getScenesForBlock(lesson.blocks[blockIdx], lesson.blocks[blockIdx].content || {});
+  const scene = scenes[sceneIdx];
+  if (!scene) return;
+  scene.image = null;
+  renderSceneMediaIfVisible(blockIdx, sceneIdx);
+}
+
+// Hämtar bilder för alla scener i ETT block (använt efter AI-omskrivning,
+// se rewriteBlock, eftersom det blocket får helt nytt scen-innehåll).
+async function queueImagesForBlock(blockIdx) {
+  const scenes = getScenesForBlock(lesson.blocks[blockIdx], lesson.blocks[blockIdx].content || {});
+  scenes.forEach((sc, si) => {
+    sc.image = undefined;
+    renderSceneMediaIfVisible(blockIdx, si);
+  });
+  for (let si = 0; si < scenes.length; si++) {
+    await resolveAndRenderSceneImage(blockIdx, si, scenes[si]);
+  }
 }
 
 function setLvl(l) {
@@ -607,7 +794,7 @@ async function generateLesson() {
   document.getElementById('loading').style.display = 'flex';
 
   // Animate loading steps
-  const steps = ['ls1','ls2','ls3','ls4','ls5'];
+  const steps = ['ls1','ls2','ls3','ls4'];
   let si = 0;
   const stepTimer = setInterval(() => {
     if (si > 0) document.getElementById(steps[si-1]).className = 'lstep done';
@@ -660,6 +847,7 @@ function renderEditor() {
 
   buildSidebar();
   renderBlock(0);
+  startImageQueue();
 }
 
 const typeIcons = { lecture:'📖', task:'✏️', video:'🎬', test:'✅' };
@@ -1017,6 +1205,7 @@ async function rewriteBlock(idx) {
     lesson.blocks[idx] = data.block;
     buildSidebar();
     renderBlock(idx);
+    if (['lecture', 'task', 'test'].includes(data.block.type)) queueImagesForBlock(idx);
   } catch(e) {
     alert('Fel vid omskrivning: ' + e.message);
     if (btn) { btn.textContent = 'Ändra →'; btn.disabled = false; }
