@@ -4,8 +4,8 @@ const { v4: uuidv4 } = require('uuid');
 const { planLesson } = require('../agents/planner');
 const { writeLesson, writeBlock } = require('../agents/writer');
 const { checkLesson } = require('../agents/checker');
-const { pickVisual, verifyVisualMatch, summarizeConcept } = require('../agents/visualPicker');
-const { getCaptionTracks } = require('../agents/youtubeSearch');
+const { resolveSceneImage } = require('../agents/sceneImage');
+const { searchYoutubeVideos, getCaptionTracks } = require('../agents/youtubeSearch');
 
 // In-memory lagring av lektioner (byt till PostgreSQL senare)
 const lessons = new Map();
@@ -163,6 +163,30 @@ router.put('/:id/block/:blockId/youtube', (req, res) => {
 });
 
 /**
+ * POST /api/lesson/:id/block/:blockId/youtube-search
+ * Söker YouTube efter videoförslag (max 3) för läraren att välja mellan.
+ * Kan anropas både automatiskt (standardfråga vid blockets första visning)
+ * och manuellt när läraren skriver egna sökord ("Sök igen").
+ */
+router.post('/:id/block/:blockId/youtube-search', async (req, res) => {
+  const lesson = lessons.get(req.params.id);
+  if (!lesson) return res.status(404).json({ error: 'Lektionen hittades inte' });
+
+  const { query } = req.body;
+  if (!query) return res.status(400).json({ error: 'query krävs' });
+
+  try {
+    const videos = await searchYoutubeVideos(query);
+    res.json({ success: true, videos });
+  } catch (error) {
+    if (error.code === 'NO_API_KEY') {
+      return res.status(503).json({ error: 'YouTube-sökning är inte konfigurerad', code: 'NO_API_KEY' });
+    }
+    res.status(500).json({ error: 'Kunde inte söka på YouTube', details: error.message });
+  }
+});
+
+/**
  * GET /api/lesson/youtube-captions/:videoId
  * Hämtar tillgängliga undertextspår för en vald video (best-effort — se
  * kommentar i src/agents/youtubeSearch.js om API-nyckelns begränsningar).
@@ -230,56 +254,22 @@ router.put('/:id/blocks/reorder', (req, res) => {
 });
 
 /**
- * POST /api/lesson/visual-decision
- * Claude väljer Wikimedia-sökfråga för en scen baserat på voice_text.
- * previous_query (valfri) skickas med vid omförsök efter en misslyckad
- * relevanskontroll, så Claude föreslår en genuint annan fråga.
+ * POST /api/lesson/scene-image
+ * Hela bildupplösningen för en scen i ett enda anrop: Wikimedia (med
+ * omförsök via billiga sökordstillägg), sedan Unsplash, sedan en svensk
+ * sammanfattning som sista utväg. image_search_query kommer från writer.js
+ * (skrivs redan när scenen genereras) — inget Claude-anrop krävs för att
+ * bestämma frågan här, bara för relevanskontroll och ev. sammanfattning.
  */
-router.post('/visual-decision', async (req, res) => {
-  const { voice_text, previous_query } = req.body;
+router.post('/scene-image', async (req, res) => {
+  const { voice_text, image_search_query } = req.body;
   if (!voice_text) return res.status(400).json({ error: 'voice_text krävs' });
 
   try {
-    const decision = await pickVisual({ voice_text, previous_query });
-    res.json({ success: true, decision });
+    const result = await resolveSceneImage({ voice_text, image_search_query });
+    res.json({ success: true, ...result });
   } catch (error) {
-    res.status(500).json({ error: 'Kunde inte avgöra visualisering', details: error.message });
-  }
-});
-
-/**
- * POST /api/lesson/visual-verify
- * Claude kontrollerar om en Wikimedia-bildtitel faktiskt visar det vetenskapliga
- * konceptet i scenens voice_text på ett sätt som passar årskurs 7-9 — skydd mot
- * att Commons nyckelordssökning ger en irrelevant, för avancerad eller felaktig bild.
- */
-router.post('/visual-verify', async (req, res) => {
-  const { image_title, voice_text } = req.body;
-  if (!image_title || !voice_text) return res.status(400).json({ error: 'image_title och voice_text krävs' });
-
-  try {
-    const match = await verifyVisualMatch({ image_title, voice_text });
-    res.json({ success: true, match });
-  } catch (error) {
-    res.status(500).json({ error: 'Kunde inte verifiera bilden', details: error.message });
-  }
-});
-
-/**
- * POST /api/lesson/visual-summary
- * Sista utväg när ingen Wikimedia-bild klarade relevanskontrollen efter alla
- * omförsök — en kort svensk sammanfattning att visa som text i en färgad
- * platshållarruta, så eleven ser något relevant i stället för en tom ruta.
- */
-router.post('/visual-summary', async (req, res) => {
-  const { voice_text } = req.body;
-  if (!voice_text) return res.status(400).json({ error: 'voice_text krävs' });
-
-  try {
-    const summary = await summarizeConcept({ voice_text });
-    res.json({ success: true, summary });
-  } catch (error) {
-    res.status(500).json({ error: 'Kunde inte sammanfatta konceptet', details: error.message });
+    res.status(500).json({ error: 'Kunde inte hämta bild för scenen', details: error.message });
   }
 });
 

@@ -15,6 +15,12 @@ const VOICE_STYLE_INSTR = `VOICE_TEXT STYLE (STRICT):
   Examples (Swedish): "H2O" → "H två O", "Na⁺" → "Na plus", "CO2" → "C O två", "2H2 + O2" → "två H två plus O två".
   Examples (English): "H2O" → "H two O", "Na⁺" → "Na plus".`;
 
+const IMAGE_QUERY_INSTR = `IMAGE_SEARCH_QUERY (STRICT):
+- For each scene, also write image_search_query: 3-5 ENGLISH words — the best Wikimedia Commons search query for a simple educational diagram that shows exactly the SCIENTIFIC CONCEPT this scene is teaching.
+- If voice_text uses an everyday metaphor or analogy (e.g. friends, candy, a football team, a rope), image_search_query must describe the real scientific concept being taught, never the metaphor itself. Example: voice_text uses "two friends sharing candy" to explain covalent bonding → image_search_query is "covalent bond electron sharing diagram", not "friends candy".
+- Never university- or research-level terms — this is for a 13-15 year old.
+- Black-and-white diagrams and sketches are perfectly fine — accuracy beats color or decoration.`;
+
 /**
  * Genererar innehåll för ett enskilt lektionsblock. Fungerar likadant oavsett
  * ämne — prompten tar bara emot ämnet som en variabel, ingen ämnesspecifik logik.
@@ -43,12 +49,14 @@ ${langInstr}
 
 ${VOICE_STYLE_INSTR}
 
+${IMAGE_QUERY_INSTR}
+
 Return ONLY JSON:
 {
   "scenes": [
     {
       "voice_text": "the scene's text in the lesson language — this is exactly what is both shown on screen and spoken aloud",
-      "visual_keywords": "2-5 ENGLISH keywords describing what this specific scene is about, used only as a fallback for image search",
+      "image_search_query": "3-5 ENGLISH words, see IMAGE_SEARCH_QUERY rules above",
       "emphasis": false
     }
   ]
@@ -59,7 +67,7 @@ Rules:
 - First scene is a short "hook", 1 sentence to grab attention (emphasis: false)
 - Exactly one scene is the block's main idea, mark it "emphasis": true
 - The rest are explanation scenes. ${sceneLenRule}
-- Each scene's visual_keywords must match that scene's own voice_text, not the whole block`;
+- Each scene's image_search_query must match that scene's own voice_text, not the whole block`;
 
   } else if (block.type === 'task') {
     prompt = `You are a ${lessonContext.subject} teacher. Write a lesson task as narrated scenes.
@@ -74,11 +82,13 @@ ${langInstr}
 
 ${VOICE_STYLE_INSTR}
 
+${IMAGE_QUERY_INSTR}
+
 Return ONLY JSON:
 {
   "scenes": [
-    { "voice_text": "short explanation of what to do", "visual_keywords": "2-5 English keywords", "emphasis": false },
-    { "voice_text": "the actual task for the student (can be multi-line)", "visual_keywords": "2-5 English keywords", "emphasis": true }
+    { "voice_text": "short explanation of what to do", "image_search_query": "3-5 English words, see IMAGE_SEARCH_QUERY rules above", "emphasis": false },
+    { "voice_text": "the actual task for the student (can be multi-line)", "image_search_query": "3-5 English words, see IMAGE_SEARCH_QUERY rules above", "emphasis": true }
   ],
   "hint": "a hint (optional, can be null)"
 }
@@ -86,7 +96,7 @@ Return ONLY JSON:
 Rules:
 - Exactly 2 scenes: (1) explanation, (2) the task itself with "emphasis": true
 - ${sceneLenRule}
-- Each scene's visual_keywords must match that specific scene's content`;
+- Each scene's image_search_query must match that specific scene's content`;
 
   } else if (block.type === 'test') {
     prompt = `You are a ${lessonContext.subject} teacher. Create review questions as narrated scenes — one scene = one question.
@@ -98,17 +108,19 @@ ${langInstr}
 
 ${VOICE_STYLE_INSTR}
 
+${IMAGE_QUERY_INSTR}
+
 Return ONLY JSON:
 {
   "scenes": [
-    { "voice_text": "1. Full question text, starting with its number?", "visual_keywords": "2-5 English keywords for this question's topic", "emphasis": false }
+    { "voice_text": "1. Full question text, starting with its number?", "image_search_query": "3-5 English words for this question's topic, see IMAGE_SEARCH_QUERY rules above", "emphasis": false }
   ]
 }
 
 Rules:
 - 3-5 scenes, one scene = one question
 - Each voice_text must start with the question number, e.g. "1. ..."
-- visual_keywords must match this specific question's topic, not the whole test`;
+- image_search_query must match this specific question's topic, not the whole test`;
 
   } else if (block.type === 'video') {
     // Minimalt innehåll för video-block — läraren väljer/klistrar in länken själv
@@ -121,7 +133,7 @@ Rules:
       content: {
         scenes: [{
           voice_text: introByLang[language] || introByLang.sv,
-          visual_keywords: block.title,
+          image_search_query: block.title,
           emphasis: false
         }],
         youtube_query: block.youtube_query,
