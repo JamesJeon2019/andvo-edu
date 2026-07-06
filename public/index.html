@@ -151,12 +151,9 @@
   .tw{transition:background .15s,color .15s;border-radius:3px;padding:0 1px;}
   .tw.tts-highlight{background:rgba(108,143,255,.4);color:#fff;}
 
-  /* ── Bilder (Wikimedia Commons + Unsplash-reserv) ── */
+  /* ── Bilder (Google-bildsökning + DALL-E-reserv, redan upplösta av servern) ── */
   .img-credit{position:absolute;bottom:0;right:0;background:rgba(0,0,0,.6);color:#fff;font-size:10px;padding:3px 9px;border-radius:8px 0 0 0;}
   .img-credit a{color:#fff;}
-  .img-skeleton{width:100%;height:180px;background:linear-gradient(90deg,var(--surface2) 25%,var(--surface) 37%,var(--surface2) 63%);background-size:400% 100%;animation:shimmer 1.4s infinite;position:relative;}
-  @keyframes shimmer{0%{background-position:100% 0}100%{background-position:0 0}}
-  .mini-spinner{width:26px;height:26px;border:3px solid rgba(255,255,255,.25);border-top-color:var(--accent);border-radius:50%;animation:spin .8s linear infinite;position:absolute;top:50%;left:50%;margin:-13px 0 0 -13px;}
 
   /* ── Scener (röst + bild per scen) ── */
   .scene-list{display:flex;flex-direction:column;gap:16px;margin-top:4px;}
@@ -206,9 +203,9 @@
 
     <label>Elevnivå</label>
     <div class="lvl-grid">
-      <div class="lvl-circle lvl-basic" id="bw" onclick="setLvl('weak')" title="Grön=Grundläggande"></div>
-      <div class="lvl-circle lvl-medium selected" id="bm" onclick="setLvl('mid')" title="Blå=Medel"></div>
-      <div class="lvl-circle lvl-advanced" id="bs" onclick="setLvl('strong')" title="Lila=Avancerad"></div>
+      <div class="lvl-circle lvl-basic" id="bw" onclick="setLvl('weak')" title="Grundläggande"></div>
+      <div class="lvl-circle lvl-medium selected" id="bm" onclick="setLvl('mid')" title="Medel"></div>
+      <div class="lvl-circle lvl-advanced" id="bs" onclick="setLvl('strong')" title="Avancerad"></div>
     </div>
 
     <div class="error-box" id="errBox"></div>
@@ -223,8 +220,9 @@
   <div class="load-steps">
     <div class="lstep" id="ls1"><div class="lstep-dot"></div>Planner: skapar lektionsplan</div>
     <div class="lstep" id="ls2"><div class="lstep-dot"></div>Writer: genererar innehåll</div>
-    <div class="lstep" id="ls3"><div class="lstep-dot"></div>Checker: kontrollerar fakta</div>
-    <div class="lstep" id="ls4"><div class="lstep-dot"></div>Formaterar lektion</div>
+    <div class="lstep" id="ls3"><div class="lstep-dot"></div>Bilder: hämtar illustrationer</div>
+    <div class="lstep" id="ls4"><div class="lstep-dot"></div>Checker: kontrollerar fakta</div>
+    <div class="lstep" id="ls5"><div class="lstep-dot"></div>Formaterar lektion</div>
   </div>
 </div>
 
@@ -257,7 +255,6 @@ let lvl = 'mid';
 let lessonId = null;
 let lesson = null;
 let currentBlockIdx = 0;
-let blockRenderGen = 0; // ökar varje renderBlock-anrop, även vid samma idx — skyddar mot stale bildsvar
 
 /* ══════════════════ RÖSTUPPLÄSNING (Web Speech API) ══════════════════ */
 let allVoices = [];
@@ -438,7 +435,7 @@ function getScenesForBlock(b, c) {
   if (Array.isArray(c.scenes) && c.scenes.length) return c.scenes;
   const legacyText = c.voice_text || c.lead || c.instruction || '';
   if (!legacyText) return [];
-  return [{ voice_text: legacyText, image_search_query: fallbackQueryFor(b) }];
+  return [{ voice_text: legacyText, image: null, image_concept: b.title }];
 }
 
 function buildScenePlayer(idx, scenes, opts = {}) {
@@ -446,14 +443,12 @@ function buildScenePlayer(idx, scenes, opts = {}) {
   sceneWordMaps[idx] = [];
   if (!scenes || !scenes.length) return '';
 
-  // Vilken visualisering en scen ska få avgörs alltid asynkront av Claude
-  // (se resolveSceneVisual) — scenen startar därför alltid med en skeleton.
   const scenesHtml = scenes.map((sc, si) => {
     const { html, map } = wrapVoiceText(sc.voice_text || '');
     sceneWordMaps[idx][si] = map;
     return `
     <div class="scene${sc.emphasis ? ' scene-emphasis' : ''}" id="scene${idx}_${si}">
-      <div class="scene-media" id="sceneMedia${idx}_${si}"><div class="img-skeleton"><div class="mini-spinner"></div></div></div>
+      <div class="scene-media" id="sceneMedia${idx}_${si}">${renderSceneMediaHtml(sc)}</div>
       <div class="scene-body">
         <button class="scene-play" onclick="playScene(${idx},${si})" title="Läs upp denna scen">▶</button>
         <div class="scene-text" id="sceneText${idx}_${si}">${html}</div>
@@ -564,78 +559,31 @@ function clearSceneHighlight(idx, si) {
   if (prev) prev.classList.remove('tts-highlight');
 }
 
-/* ══════════════════ BILDER — allt sker i ETT serveranrop per scen ══════════════════ */
-// Wikimedia-sökning, Claude-relevanskontroll (med omförsök) och Unsplash-reserv
-// körs alla server-side bakom POST /api/lesson/scene-image (se
-// src/agents/sceneImage.js) — klienten gör inga egna anrop till Wikimedia,
-// Unsplash eller Claude för bilder. Det eliminerar de race conditions som
-// uppstod tidigare när flera beroende klientanrop kunde hinna bli inaktuella
-// om läraren bytte block mitt i laddningen.
-
-// Enda fallback-frågan om en scen saknar image_search_query helt (t.ex. äldre
-// lektionsformat) — inga ämnesspecifika ord, bara lektionens eget ämne + blockets titel.
-function fallbackQueryFor(block) {
-  return `${lesson.subject || ''} ${block.title || ''}`.trim();
-}
-
-function renderSceneImage(idx, si, img) {
-  const media = document.getElementById(`sceneMedia${idx}_${si}`);
-  if (!media) return;
-  const sourceLabel = img.source === 'unsplash' ? 'Unsplash' : 'Wikimedia Commons';
-  media.innerHTML = `
-    <img src="${img.url}" alt="" loading="lazy"/>
-    <div class="img-credit">${escapeHtml(img.credit)} · <a href="${img.creditLink}" target="_blank" rel="noopener">${sourceLabel}</a></div>`;
-}
+/* ══════════════════ BILDER — redan upplösta av servern vid generering ══════════════════ */
+// Google Custom Search, Claude Vision-relevanskontroll och DALL-E-reserv körs
+// alla server-side under lektionsgenereringen (se src/agents/sceneImage.js,
+// anropas från src/agents/writer.js) — varje scen har redan sc.image (eller
+// sc.image_concept för platshållaren) i lesson-JSON. Klienten gör inga egna
+// bild-API-anrop och behöver inte orkestrera något asynkront här.
 
 // Ämnesikon för platshållaren — appen omfattar bara dessa fyra vetenskapsämnen.
 const SUBJECT_ICON = { Kemi: '🧪', Biologi: '🧬', Fysik: '⚛️', Matematik: '📐' };
 
-// ── Platshållare: ämnesikon + stor svensk text, sista utväg om varken
-// Wikimedia eller Unsplash gav en bild som klarade relevanskontrollen. Ingen
-// animation, ingen färgad bakgrund — en neutral yta med vad scenen faktiskt
-// handlar om (Claudes svenska sammanfattning från servern, se scene-image).
-function renderScenePlaceholder(idx, si, block, summary) {
-  const media = document.getElementById(`sceneMedia${idx}_${si}`);
-  if (!media) return;
-  const icon = SUBJECT_ICON[lesson.subject] || '📘';
-  const text = summary || block.title || fallbackQueryFor(block);
-  media.innerHTML = `<div class="visual-placeholder"><span class="vp-icon">${icon}</span><span class="vp-text">${escapeHtml(text)}</span></div>`;
-}
-
-// Ett enda anrop per scen: servern söker Wikimedia (med omförsök), verifierar
-// relevans, faller tillbaka på Unsplash, och sammanfattar konceptet på svenska
-// om inget hittades — se POST /api/lesson/scene-image. `gen` är den
-// renderBlock-generation begäran startade i — skyddar mot att ett svar som
-// kommer tillbaka efter att läraren lämnat OCH kommit tillbaka till samma
-// block (ny generation, samma idx) råkar rendera i de nya DOM-elementen.
-async function resolveSceneVisual(idx, si, sc, block, gen) {
-  const isStale = () => currentBlockIdx !== idx || blockRenderGen !== gen;
-  const voiceText = sc.voice_text;
-  const query = sc.image_search_query || fallbackQueryFor(block);
-
-  try {
-    const res = await fetch('/api/lesson/scene-image', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ voice_text: voiceText, image_search_query: query })
-    });
-    if (isStale()) return;
-    if (!res.ok) throw new Error('scene-image svarade ' + res.status);
-    const data = await res.json();
-    if (!data.success) throw new Error(data.error || 'Okänt fel');
-
-    if (data.found && data.image) renderSceneImage(idx, si, data.image);
-    else renderScenePlaceholder(idx, si, block, data.summary);
-  } catch (e) {
-    console.warn('Kunde inte hämta bild för scen:', e.message);
-    if (!isStale()) renderScenePlaceholder(idx, si, block, null);
+// Bygger HTML för en scens media direkt från redan upplöst data i scen-JSON.
+// Ingen animation, ingen färgad bakgrund vid platshållare — en neutral yta
+// med vad scenen faktiskt handlar om.
+function renderSceneMediaHtml(sc) {
+  const img = sc.image;
+  if (img && img.url) {
+    const sourceLabel = img.source === 'dalle' ? 'DALL-E 3' : 'Google';
+    const credit = img.creditLink
+      ? `<div class="img-credit">${escapeHtml(img.credit)} · <a href="${img.creditLink}" target="_blank" rel="noopener">${sourceLabel}</a></div>`
+      : `<div class="img-credit">${escapeHtml(img.credit)}</div>`;
+    return `<img src="${img.url}" alt="" loading="lazy"/>${credit}`;
   }
-}
-
-function loadSceneVisuals(idx, scenes) {
-  const block = lesson.blocks[idx] || {};
-  const gen = blockRenderGen;
-  (scenes || []).forEach((sc, si) => resolveSceneVisual(idx, si, sc, block, gen));
+  const icon = SUBJECT_ICON[lesson.subject] || '📘';
+  const text = sc.image_concept || lesson.title || '';
+  return `<div class="visual-placeholder"><span class="vp-icon">${icon}</span><span class="vp-text">${escapeHtml(text)}</span></div>`;
 }
 
 function setLvl(l) {
@@ -659,7 +607,7 @@ async function generateLesson() {
   document.getElementById('loading').style.display = 'flex';
 
   // Animate loading steps
-  const steps = ['ls1','ls2','ls3','ls4'];
+  const steps = ['ls1','ls2','ls3','ls4','ls5'];
   let si = 0;
   const stepTimer = setInterval(() => {
     if (si > 0) document.getElementById(steps[si-1]).className = 'lstep done';
@@ -737,7 +685,6 @@ function buildSidebar() {
 function renderBlock(idx) {
   stopSpeech();
   currentBlockIdx = idx;
-  blockRenderGen++;
   document.querySelectorAll('.sb-item').forEach((el, i) => {
     el.className = 'sb-item' + (i===idx?' active':'') + (!lesson.blocks[i].visible?' hidden-block':'');
   });
@@ -760,17 +707,12 @@ function renderBlock(idx) {
     </div>
     <div class="block-title">${b.title}</div>`;
 
-  let scenesForImages = null;
   let videoBlockIdx = null;
 
   if (b.type === 'lecture') {
-    const scenes = getScenesForBlock(b, c);
-    scenesForImages = scenes;
-    html += buildScenePlayer(idx, scenes);
+    html += buildScenePlayer(idx, getScenesForBlock(b, c));
   } else if (b.type === 'task') {
-    const scenes = getScenesForBlock(b, c);
-    scenesForImages = scenes;
-    html += buildScenePlayer(idx, scenes);
+    html += buildScenePlayer(idx, getScenesForBlock(b, c));
     if (c.hint) {
       html += `<div class="tbox">
         <h4>💡 Tips</h4>
@@ -785,9 +727,7 @@ function renderBlock(idx) {
       <div class="vbox" id="videoArea${idx}"></div>`;
     videoBlockIdx = idx;
   } else if (b.type === 'test') {
-    const scenes = getScenesForBlock(b, c);
-    scenesForImages = scenes;
-    html += buildScenePlayer(idx, scenes, { answers: true });
+    html += buildScenePlayer(idx, getScenesForBlock(b, c), { answers: true });
   }
 
   // AI rewrite
@@ -809,7 +749,6 @@ function renderBlock(idx) {
   main.scrollTop = 0;
 
   setupTtsControls(idx);
-  if (scenesForImages) loadSceneVisuals(idx, scenesForImages);
   if (videoBlockIdx !== null) initVideoArea(videoBlockIdx);
 }
 

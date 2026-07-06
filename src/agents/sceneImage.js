@@ -1,41 +1,40 @@
-const { searchWikimediaImages } = require('./wikimedia');
-const { searchUnsplashPhotos } = require('./unsplash');
-const { verifyVisualMatch, summarizeConcept } = require('./visualPicker');
+const { searchGoogleImages } = require('./googleImageSearch');
+const { generateDalleImage } = require('./dalleImage');
+const { verifyImageRelevance, summarizeConcept } = require('./visualPicker');
 
-// Om det förvalda image_search_query (skrivet av writer.js tillsammans med
-// voice_text) inte ger en träff som klarar Claudes relevanskontroll, försöker
-// vi 2 gånger till med samma grundfråga plus enkla, billiga tillägg — ingen
-// ny Claude-fråga behövs, det är bara Wikimedias egen sökning som körs om.
-const RETRY_SUFFIXES = ['', ' diagram', ' simple educational'];
+// Max antal Google-kandidater vi provar Claude Vision på innan vi ger upp och
+// går vidare till DALL-E — enligt spec.
+const MAX_ATTEMPTS = 3;
 
 /**
- * SCENE IMAGE — hela bildupplösningen för en scen i ETT serveranrop: Wikimedia
- * (med omförsök), sedan Unsplash, sedan en svensk sammanfattning som sista
- * utväg. Klienten gör alltså bara ett enda anrop per scen i stället för att
- * själv orkestrera flera beroende nätverksanrop — det var källan till
- * race conditions/tomma bilder när eleven bytte block mitt i laddningen.
+ * SCENE IMAGE — hela bildupplösningen för en scen: Google Custom Search (med
+ * domänprioritering + Claude Vision-relevanskontroll, max 3 försök), sedan
+ * DALL-E 3 som reserv, sedan en svensk sammanfattning som sista utväg för
+ * platshållartext. Anropas av writer.js under lektionsgenereringen — körs
+ * ALDRIG från klienten, så eleven/läraren gör inga egna bild-API-anrop.
  */
 async function resolveSceneImage({ voice_text, image_search_query }) {
-  const baseQuery = (image_search_query || voice_text || '').trim();
+  const concept = (image_search_query || voice_text || '').trim();
 
-  if (baseQuery) {
-    for (const suffix of RETRY_SUFFIXES) {
-      const query = `${baseQuery}${suffix}`.trim();
-      const wiki = await searchWikimediaImages(query);
-      if (!wiki.length) continue;
-
-      const top = wiki[0];
-      const isMatch = await verifyVisualMatch({ image_title: top.title, voice_text });
-      if (isMatch) return { found: true, image: top };
+  if (concept) {
+    const candidates = await searchGoogleImages(concept);
+    for (const candidate of candidates.slice(0, MAX_ATTEMPTS)) {
+      const isMatch = await verifyImageRelevance({ image_url: candidate.url, concept });
+      if (isMatch) {
+        return {
+          found: true,
+          image: {
+            url: candidate.url,
+            credit: candidate.displayLink || 'Google-bildsökning',
+            creditLink: candidate.contextLink,
+            source: 'google'
+          }
+        };
+      }
     }
-  }
 
-  if (baseQuery) {
-    const unsplash = await searchUnsplashPhotos(baseQuery);
-    if (unsplash.length) {
-      const r = unsplash[0];
-      return { found: true, image: { url: r.url, credit: r.credit, creditLink: r.creditLink, source: 'unsplash' } };
-    }
+    const dalle = await generateDalleImage(concept);
+    if (dalle) return { found: true, image: dalle };
   }
 
   const summary = await summarizeConcept({ voice_text }).catch(() => null);

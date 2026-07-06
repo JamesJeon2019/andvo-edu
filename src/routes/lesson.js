@@ -4,7 +4,6 @@ const { v4: uuidv4 } = require('uuid');
 const { planLesson } = require('../agents/planner');
 const { writeLesson, writeBlock } = require('../agents/writer');
 const { checkLesson } = require('../agents/checker');
-const { resolveSceneImage } = require('../agents/sceneImage');
 const { searchYoutubeVideos, getCaptionTracks } = require('../agents/youtubeSearch');
 
 // In-memory lagring av lektioner (byt till PostgreSQL senare)
@@ -251,26 +250,6 @@ router.put('/:id/blocks/reorder', (req, res) => {
   lessons.set(lesson.id, lesson);
 
   res.json({ success: true, blocks: lesson.blocks });
-});
-
-/**
- * POST /api/lesson/scene-image
- * Hela bildupplösningen för en scen i ett enda anrop: Wikimedia (med
- * omförsök via billiga sökordstillägg), sedan Unsplash, sedan en svensk
- * sammanfattning som sista utväg. image_search_query kommer från writer.js
- * (skrivs redan när scenen genereras) — inget Claude-anrop krävs för att
- * bestämma frågan här, bara för relevanskontroll och ev. sammanfattning.
- */
-router.post('/scene-image', async (req, res) => {
-  const { voice_text, image_search_query } = req.body;
-  if (!voice_text) return res.status(400).json({ error: 'voice_text krävs' });
-
-  try {
-    const result = await resolveSceneImage({ voice_text, image_search_query });
-    res.json({ success: true, ...result });
-  } catch (error) {
-    res.status(500).json({ error: 'Kunde inte hämta bild för scenen', details: error.message });
-  }
 });
 
 /**

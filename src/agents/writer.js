@@ -1,5 +1,6 @@
 const Anthropic = require('@anthropic-ai/sdk');
 const { detectGradeLevel, languageInstructionsFor } = require('./gradeLevel');
+const { resolveSceneImage } = require('./sceneImage');
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
@@ -16,7 +17,7 @@ const VOICE_STYLE_INSTR = `VOICE_TEXT STYLE (STRICT):
   Examples (English): "H2O" → "H two O", "Na⁺" → "Na plus".`;
 
 const IMAGE_QUERY_INSTR = `IMAGE_SEARCH_QUERY (STRICT):
-- For each scene, also write image_search_query: 3-5 ENGLISH words — the best Wikimedia Commons search query for a simple educational diagram that shows exactly the SCIENTIFIC CONCEPT this scene is teaching.
+- For each scene, also write image_search_query: 3-5 ENGLISH words — the best Google Image Search query for a simple educational diagram that shows exactly the SCIENTIFIC CONCEPT this scene is teaching.
 - If voice_text uses an everyday metaphor or analogy (e.g. friends, candy, a football team, a rope), image_search_query must describe the real scientific concept being taught, never the metaphor itself. Example: voice_text uses "two friends sharing candy" to explain covalent bonding → image_search_query is "covalent bond electron sharing diagram", not "friends candy".
 - Never university- or research-level terms — this is for a 13-15 year old.
 - Black-and-white diagrams and sketches are perfectly fine — accuracy beats color or decoration.`;
@@ -151,6 +152,25 @@ Rules:
   const text = response.content[0].text.trim();
   const clean = text.replace(/```json|```/g, '').trim();
   const content = JSON.parse(clean);
+
+  // Bildupplösning sker HÄR, en gång per scen, under genereringen — Google
+  // Custom Search + Claude Vision-relevanskontroll + DALL-E-reserv (se
+  // sceneImage.js). Klienten gör inga egna bild-API-anrop; scene JSON
+  // innehåller redan slutgiltig image (eller image_concept för platshållaren).
+  if (Array.isArray(content.scenes) && content.scenes.length) {
+    for (const scene of content.scenes) {
+      const resolved = await resolveSceneImage({
+        voice_text: scene.voice_text,
+        image_search_query: scene.image_search_query
+      });
+      if (resolved.found) {
+        scene.image = resolved.image;
+      } else {
+        scene.image = null;
+        scene.image_concept = resolved.summary || null;
+      }
+    }
+  }
 
   return { ...block, content };
 }
