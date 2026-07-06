@@ -4,26 +4,28 @@ const { v4: uuidv4 } = require('uuid');
 const { planLesson } = require('../agents/planner');
 const { writeLesson, writeBlock } = require('../agents/writer');
 const { checkLesson } = require('../agents/checker');
+const { pickVisual, verifyVisualMatch, summarizeConcept } = require('../agents/visualPicker');
+const { getCaptionTracks } = require('../agents/youtubeSearch');
 
-// In-memory хранилище уроков (замените на PostgreSQL позже)
+// In-memory lagring av lektioner (byt till PostgreSQL senare)
 const lessons = new Map();
 
 /**
  * POST /api/lesson/generate
- * Главный эндпоинт — генерирует полный урок
+ * Huvudendpoint — genererar en komplett lektion
  */
 router.post('/generate', async (req, res) => {
   const { topic, subject, level, duration, language } = req.body;
 
   if (!topic || !subject || !level) {
-    return res.status(400).json({ error: 'Нужны topic, subject и level' });
+    return res.status(400).json({ error: 'topic, subject och level krävs' });
   }
 
-  console.log(`\n📚 Генерирую урок: "${topic}" | ${subject} | ${level}`);
+  console.log(`\n📚 Genererar lektion: "${topic}" | ${subject} | ${level}`);
 
   try {
-    // ── Шаг 1: Planner ─────────────────────────────
-    console.log('  🗓  Planner: составляю план...');
+    // ── Steg 1: Planner ─────────────────────────────
+    console.log('  🗓  Planner: skapar plan...');
     const plan = await planLesson({
       topic,
       subject,
@@ -31,26 +33,26 @@ router.post('/generate', async (req, res) => {
       duration: duration || 60,
       language: language || 'sv'
     });
-    console.log(`  ✅ План готов: ${plan.blocks.length} блоков`);
+    console.log(`  ✅ Plan klar: ${plan.blocks.length} block`);
 
-    // ── Шаг 2: Writer ──────────────────────────────
-    console.log('  ✍️  Writer: генерирую контент...');
+    // ── Steg 2: Writer ──────────────────────────────
+    console.log('  ✍️  Writer: genererar innehåll...');
     const written = await writeLesson({
       plan,
       level,
       language: language || 'sv'
     });
-    console.log('  ✅ Контент готов');
+    console.log('  ✅ Innehåll klart');
 
-    // ── Шаг 3: Checker ─────────────────────────────
-    console.log('  🔍 Checker: проверяю факты...');
+    // ── Steg 3: Checker ─────────────────────────────
+    console.log('  🔍 Checker: kontrollerar fakta...');
     const checkResult = await checkLesson({
       lesson: written,
       subject
     });
-    console.log(`  ✅ Проверка: ${checkResult.status} — ${checkResult.summary}`);
+    console.log(`  ✅ Kontroll: ${checkResult.status} — ${checkResult.summary}`);
 
-    // ── Собираем финальный урок ────────────────────
+    // ── Sätter ihop den färdiga lektionen ────────────────────
     const lessonId = uuidv4();
     const finalLesson = {
       id: lessonId,
@@ -59,10 +61,10 @@ router.post('/generate', async (req, res) => {
       createdAt: new Date().toISOString()
     };
 
-    // Сохраняем в памяти
+    // Sparar i minnet
     lessons.set(lessonId, finalLesson);
 
-    console.log(`  🎉 Урок готов: ID ${lessonId}\n`);
+    console.log(`  🎉 Lektion klar: ID ${lessonId}\n`);
 
     res.json({
       success: true,
@@ -71,9 +73,9 @@ router.post('/generate', async (req, res) => {
     });
 
   } catch (error) {
-    console.error('❌ Ошибка генерации:', error.message);
+    console.error('❌ Fel vid generering:', error.message);
     res.status(500).json({
-      error: 'Ошибка генерации урока',
+      error: 'Fel vid generering av lektion',
       details: error.message
     });
   }
@@ -81,25 +83,25 @@ router.post('/generate', async (req, res) => {
 
 /**
  * GET /api/lesson/:id
- * Получить урок по ID
+ * Hämta en lektion via ID
  */
 router.get('/:id', (req, res) => {
   const lesson = lessons.get(req.params.id);
-  if (!lesson) return res.status(404).json({ error: 'Урок не найден' });
+  if (!lesson) return res.status(404).json({ error: 'Lektionen hittades inte' });
   res.json({ success: true, lesson });
 });
 
 /**
  * PUT /api/lesson/:id/block/:blockId
- * Обновить блок (учитель редактирует)
+ * Uppdatera ett block (läraren redigerar)
  */
 router.put('/:id/block/:blockId', (req, res) => {
   const lesson = lessons.get(req.params.id);
-  if (!lesson) return res.status(404).json({ error: 'Урок не найден' });
+  if (!lesson) return res.status(404).json({ error: 'Lektionen hittades inte' });
 
   const blockId = parseInt(req.params.blockId);
   const blockIndex = lesson.blocks.findIndex(b => b.id === blockId);
-  if (blockIndex === -1) return res.status(404).json({ error: 'Блок не найден' });
+  if (blockIndex === -1) return res.status(404).json({ error: 'Blocket hittades inte' });
 
   lesson.blocks[blockIndex] = { ...lesson.blocks[blockIndex], ...req.body };
   lessons.set(lesson.id, lesson);
@@ -109,11 +111,11 @@ router.put('/:id/block/:blockId', (req, res) => {
 
 /**
  * DELETE /api/lesson/:id/block/:blockId
- * Удалить блок
+ * Ta bort ett block
  */
 router.delete('/:id/block/:blockId', (req, res) => {
   const lesson = lessons.get(req.params.id);
-  if (!lesson) return res.status(404).json({ error: 'Урок не найден' });
+  if (!lesson) return res.status(404).json({ error: 'Lektionen hittades inte' });
 
   const blockId = parseInt(req.params.blockId);
   lesson.blocks = lesson.blocks.filter(b => b.id !== blockId);
@@ -124,15 +126,15 @@ router.delete('/:id/block/:blockId', (req, res) => {
 
 /**
  * PUT /api/lesson/:id/block/:blockId/toggle
- * Скрыть/показать блок (не удалять)
+ * Dölj/visa ett block (tar inte bort det)
  */
 router.put('/:id/block/:blockId/toggle', (req, res) => {
   const lesson = lessons.get(req.params.id);
-  if (!lesson) return res.status(404).json({ error: 'Урок не найден' });
+  if (!lesson) return res.status(404).json({ error: 'Lektionen hittades inte' });
 
   const blockId = parseInt(req.params.blockId);
   const block = lesson.blocks.find(b => b.id === blockId);
-  if (!block) return res.status(404).json({ error: 'Блок не найден' });
+  if (!block) return res.status(404).json({ error: 'Blocket hittades inte' });
 
   block.visible = !block.visible;
   lessons.set(lesson.id, lesson);
@@ -142,15 +144,15 @@ router.put('/:id/block/:blockId/toggle', (req, res) => {
 
 /**
  * PUT /api/lesson/:id/block/:blockId/youtube
- * Сохранить YouTube ссылку (не теряется при навигации)
+ * Spara en YouTube-länk (försvinner inte vid navigering)
  */
 router.put('/:id/block/:blockId/youtube', (req, res) => {
   const lesson = lessons.get(req.params.id);
-  if (!lesson) return res.status(404).json({ error: 'Урок не найден' });
+  if (!lesson) return res.status(404).json({ error: 'Lektionen hittades inte' });
 
   const blockId = parseInt(req.params.blockId);
   const block = lesson.blocks.find(b => b.id === blockId);
-  if (!block) return res.status(404).json({ error: 'Блок не найден' });
+  if (!block) return res.status(404).json({ error: 'Blocket hittades inte' });
 
   block.content = block.content || {};
   block.content.youtube_url = req.body.url;
@@ -161,26 +163,36 @@ router.put('/:id/block/:blockId/youtube', (req, res) => {
 });
 
 /**
+ * GET /api/lesson/youtube-captions/:videoId
+ * Hämtar tillgängliga undertextspår för en vald video (best-effort — se
+ * kommentar i src/agents/youtubeSearch.js om API-nyckelns begränsningar).
+ */
+router.get('/youtube-captions/:videoId', async (req, res) => {
+  const tracks = await getCaptionTracks(req.params.videoId);
+  res.json({ success: true, tracks });
+});
+
+/**
  * POST /api/lesson/:id/block/:blockId/rewrite
- * AI переписывает один блок по запросу учителя
+ * AI skriver om ett block enligt lärarens instruktion
  */
 router.post('/:id/block/:blockId/rewrite', async (req, res) => {
   const lesson = lessons.get(req.params.id);
-  if (!lesson) return res.status(404).json({ error: 'Урок не найден' });
+  if (!lesson) return res.status(404).json({ error: 'Lektionen hittades inte' });
 
   const blockId = parseInt(req.params.blockId);
   const blockIndex = lesson.blocks.findIndex(b => b.id === blockId);
-  if (blockIndex === -1) return res.status(404).json({ error: 'Блок не найден' });
+  if (blockIndex === -1) return res.status(404).json({ error: 'Blocket hittades inte' });
 
   const { instruction } = req.body;
-  if (!instruction) return res.status(400).json({ error: 'Нужен instruction' });
+  if (!instruction) return res.status(400).json({ error: 'instruction krävs' });
 
   try {
-    // Модифицируем description блока по запросу учителя
+    // Ändrar blockets description enligt lärarens instruktion
     const block = lesson.blocks[blockIndex];
     const modifiedBlock = {
       ...block,
-      description: `${block.description}. ИНСТРУКЦИЯ УЧИТЕЛЯ: ${instruction}`
+      description: `${block.description}. LÄRARENS INSTRUKTION: ${instruction}`
     };
 
     const rewritten = await writeBlock({
@@ -195,20 +207,20 @@ router.post('/:id/block/:blockId/rewrite', async (req, res) => {
 
     res.json({ success: true, block: lesson.blocks[blockIndex] });
   } catch (error) {
-    res.status(500).json({ error: 'Ошибка переработки блока', details: error.message });
+    res.status(500).json({ error: 'Fel vid omskrivning av block', details: error.message });
   }
 });
 
 /**
  * PUT /api/lesson/:id/blocks/reorder
- * Изменить порядок блоков
+ * Ändra ordningen på blocken
  */
 router.put('/:id/blocks/reorder', (req, res) => {
   const lesson = lessons.get(req.params.id);
-  if (!lesson) return res.status(404).json({ error: 'Урок не найден' });
+  if (!lesson) return res.status(404).json({ error: 'Lektionen hittades inte' });
 
-  const { order } = req.body; // массив ID в новом порядке
-  if (!Array.isArray(order)) return res.status(400).json({ error: 'order должен быть массивом ID' });
+  const { order } = req.body; // array med ID:n i ny ordning
+  if (!Array.isArray(order)) return res.status(400).json({ error: 'order måste vara en array av ID:n' });
 
   const reordered = order.map(id => lesson.blocks.find(b => b.id === id)).filter(Boolean);
   lesson.blocks = reordered;
@@ -218,8 +230,62 @@ router.put('/:id/blocks/reorder', (req, res) => {
 });
 
 /**
+ * POST /api/lesson/visual-decision
+ * Claude väljer Wikimedia-sökfråga för en scen baserat på voice_text.
+ * previous_query (valfri) skickas med vid omförsök efter en misslyckad
+ * relevanskontroll, så Claude föreslår en genuint annan fråga.
+ */
+router.post('/visual-decision', async (req, res) => {
+  const { voice_text, previous_query } = req.body;
+  if (!voice_text) return res.status(400).json({ error: 'voice_text krävs' });
+
+  try {
+    const decision = await pickVisual({ voice_text, previous_query });
+    res.json({ success: true, decision });
+  } catch (error) {
+    res.status(500).json({ error: 'Kunde inte avgöra visualisering', details: error.message });
+  }
+});
+
+/**
+ * POST /api/lesson/visual-verify
+ * Claude kontrollerar om en Wikimedia-bildtitel faktiskt visar det vetenskapliga
+ * konceptet i scenens voice_text på ett sätt som passar årskurs 7-9 — skydd mot
+ * att Commons nyckelordssökning ger en irrelevant, för avancerad eller felaktig bild.
+ */
+router.post('/visual-verify', async (req, res) => {
+  const { image_title, voice_text } = req.body;
+  if (!image_title || !voice_text) return res.status(400).json({ error: 'image_title och voice_text krävs' });
+
+  try {
+    const match = await verifyVisualMatch({ image_title, voice_text });
+    res.json({ success: true, match });
+  } catch (error) {
+    res.status(500).json({ error: 'Kunde inte verifiera bilden', details: error.message });
+  }
+});
+
+/**
+ * POST /api/lesson/visual-summary
+ * Sista utväg när ingen Wikimedia-bild klarade relevanskontrollen efter alla
+ * omförsök — en kort svensk sammanfattning att visa som text i en färgad
+ * platshållarruta, så eleven ser något relevant i stället för en tom ruta.
+ */
+router.post('/visual-summary', async (req, res) => {
+  const { voice_text } = req.body;
+  if (!voice_text) return res.status(400).json({ error: 'voice_text krävs' });
+
+  try {
+    const summary = await summarizeConcept({ voice_text });
+    res.json({ success: true, summary });
+  } catch (error) {
+    res.status(500).json({ error: 'Kunde inte sammanfatta konceptet', details: error.message });
+  }
+});
+
+/**
  * GET /api/lesson
- * Список всех уроков (для учителя)
+ * Lista alla lektioner (för läraren)
  */
 router.get('/', (req, res) => {
   const list = Array.from(lessons.values()).map(l => ({

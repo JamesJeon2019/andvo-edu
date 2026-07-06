@@ -2,7 +2,7 @@
 
 AI-powered lesson generator for Swedish schools. Built with Node.js + Claude API.
 
-## Snabbstart / Быстрый старт
+## Snabbstart
 
 ### 1. Klona och installera
 ```bash

@@ -1,85 +1,131 @@
 const Anthropic = require('@anthropic-ai/sdk');
+const { detectGradeLevel, languageInstructionsFor } = require('./gradeLevel');
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
 const levelMap = {
-  weak:   'Объясняй очень просто. Используй аналогии из повседневной жизни. Избегай сложных терминов. Короткие предложения.',
-  mid:    'Стандартная глубина объяснения. Используй примеры. Вводи термины с объяснением.',
-  strong: 'Продвинутый уровень. Строгие научные определения. Сложные задачи. Можно использовать формулы.'
+  weak:   'Explain very simply. Use everyday-life analogies. Avoid advanced terminology. Short sentences.',
+  mid:    'Standard depth of explanation. Use examples. Introduce terms with an explanation.',
+  strong: 'Advanced level. Rigorous, precise definitions. Harder problems. Formulas are fine.'
 };
 
+const VOICE_STYLE_INSTR = `VOICE_TEXT STYLE (STRICT):
+- voice_text must sound like a real teacher speaking out loud to the class — warm, natural spoken language, never a textbook sentence.
+- Spell out every formula, chemical symbol or mathematical notation as spoken words in the lesson language — never write symbols as-is in voice_text.
+  Examples (Swedish): "H2O" → "H två O", "Na⁺" → "Na plus", "CO2" → "C O två", "2H2 + O2" → "två H två plus O två".
+  Examples (English): "H2O" → "H two O", "Na⁺" → "Na plus".`;
+
 /**
- * Генерирует контент для одного блока урока
+ * Genererar innehåll för ett enskilt lektionsblock. Fungerar likadant oavsett
+ * ämne — prompten tar bara emot ämnet som en variabel, ingen ämnesspecifik logik.
  */
 async function writeBlock({ block, lessonContext, level, language }) {
   const lvlInstr = levelMap[level] || levelMap.mid;
+  const gradeLevel = lessonContext.gradeLevel || detectGradeLevel(lessonContext.topic || lessonContext.title, level);
+  const langInstr = languageInstructionsFor(gradeLevel);
+  const isBasic = gradeLevel !== 'highschool';
+  const sceneLenRule = isBasic
+    ? 'Max 2-3 sentences per scene (voice_text) — short, simple sentences, ONE concept at a time.'
+    : '2-4 sentences per scene.';
 
   let prompt = '';
 
   if (block.type === 'lecture') {
-    prompt = `Ты — учитель ${lessonContext.subject}. Напиши текст лекции для слайда.
+    prompt = `You are a ${lessonContext.subject} teacher. Write the lecture content as a series of "scenes" — like a video presentation, where each scene is narrated aloud and paired with its own image.
 
-Урок: ${lessonContext.title}
-Блок: ${block.title}
-Описание блока: ${block.description}
-Уровень: ${lvlInstr}
-Язык: ${language}
+Lesson: ${lessonContext.title}
+Block: ${block.title}
+Block description: ${block.description}
+Level: ${lvlInstr}
+Language: ${language}
 
-Верни ТОЛЬКО JSON:
+${langInstr}
+
+${VOICE_STYLE_INSTR}
+
+Return ONLY JSON:
 {
-  "lead": "одно предложение-hook который цепляет внимание (курсивом будет показан)",
-  "highlight": "главная мысль блока — 1-2 предложения (выделенный блок)",
-  "paragraphs": [
-    "абзац 1 (3-4 предложения)",
-    "абзац 2 (3-4 предложения)",
-    "абзац 3 (опционально)"
-  ],
-  "voice_text": "текст для озвучки голосом — полный, естественный, без формул в виде символов, цифрами и словами"
-}`;
+  "scenes": [
+    {
+      "voice_text": "the scene's text in the lesson language — this is exactly what is both shown on screen and spoken aloud",
+      "visual_keywords": "2-5 ENGLISH keywords describing what this specific scene is about, used only as a fallback for image search",
+      "emphasis": false
+    }
+  ]
+}
+
+Rules:
+- 4-6 scenes per block
+- First scene is a short "hook", 1 sentence to grab attention (emphasis: false)
+- Exactly one scene is the block's main idea, mark it "emphasis": true
+- The rest are explanation scenes. ${sceneLenRule}
+- Each scene's visual_keywords must match that scene's own voice_text, not the whole block`;
 
   } else if (block.type === 'task') {
-    prompt = `Ты — учитель ${lessonContext.subject}. Напиши задание для урока.
+    prompt = `You are a ${lessonContext.subject} teacher. Write a lesson task as narrated scenes.
 
-Урок: ${lessonContext.title}
-Блок: ${block.title}
-Описание: ${block.description}
-Уровень: ${lvlInstr}
-Язык: ${language}
+Lesson: ${lessonContext.title}
+Block: ${block.title}
+Description: ${block.description}
+Level: ${lvlInstr}
+Language: ${language}
 
-Верни ТОЛЬКО JSON:
+${langInstr}
+
+${VOICE_STYLE_INSTR}
+
+Return ONLY JSON:
 {
-  "instruction": "короткое объяснение что нужно сделать",
-  "task": "конкретное задание для ученика (может быть многострочным)",
-  "hint": "подсказка (опционально, можно null)",
-  "voice_text": "текст для озвучки задания голосом"
-}`;
+  "scenes": [
+    { "voice_text": "short explanation of what to do", "visual_keywords": "2-5 English keywords", "emphasis": false },
+    { "voice_text": "the actual task for the student (can be multi-line)", "visual_keywords": "2-5 English keywords", "emphasis": true }
+  ],
+  "hint": "a hint (optional, can be null)"
+}
+
+Rules:
+- Exactly 2 scenes: (1) explanation, (2) the task itself with "emphasis": true
+- ${sceneLenRule}
+- Each scene's visual_keywords must match that specific scene's content`;
 
   } else if (block.type === 'test') {
-    prompt = `Ты — учитель ${lessonContext.subject}. Создай проверочные вопросы.
+    prompt = `You are a ${lessonContext.subject} teacher. Create review questions as narrated scenes — one scene = one question.
 
-Урок: ${lessonContext.title}
-Уровень: ${lvlInstr}
-Язык: ${language}
+Level: ${lvlInstr}
+Language: ${language}
 
-Верни ТОЛЬКО JSON:
+${langInstr}
+
+${VOICE_STYLE_INSTR}
+
+Return ONLY JSON:
 {
-  "questions": [
-    { "q": "вопрос 1?", "type": "open" },
-    { "q": "вопрос 2?", "type": "open" },
-    { "q": "вопрос 3?", "type": "open" }
-  ],
-  "voice_text": "текст для озвучки — прочитай все вопросы"
-}`;
+  "scenes": [
+    { "voice_text": "1. Full question text, starting with its number?", "visual_keywords": "2-5 English keywords for this question's topic", "emphasis": false }
+  ]
+}
+
+Rules:
+- 3-5 scenes, one scene = one question
+- Each voice_text must start with the question number, e.g. "1. ..."
+- visual_keywords must match this specific question's topic, not the whole test`;
 
   } else if (block.type === 'video') {
-    // Для видео контент минимальный — учитель вставляет ссылку сам
+    // Minimalt innehåll för video-block — läraren väljer/klistrar in länken själv
+    const introByLang = {
+      sv: `Nu ska vi titta på en video om: ${block.title}. ${block.description}`,
+      en: `Now let's watch a video about: ${block.title}. ${block.description}`
+    };
     return {
       ...block,
       content: {
-        instruction: block.description,
+        scenes: [{
+          voice_text: introByLang[language] || introByLang.sv,
+          visual_keywords: block.title,
+          emphasis: false
+        }],
         youtube_query: block.youtube_query,
-        youtube_url: block.youtube_url || null,
-        voice_text: `Сейчас посмотрим видео по теме: ${block.title}. ${block.description}`
+        youtube_url: block.youtube_url || null
       }
     };
   }
@@ -98,13 +144,13 @@ async function writeBlock({ block, lessonContext, level, language }) {
 }
 
 /**
- * Генерирует контент для всех блоков урока последовательно
+ * Genererar innehåll för alla lektionsblock, ett i taget.
  */
 async function writeLesson({ plan, level, language }) {
   const blocks = [];
 
   for (const block of plan.blocks) {
-    console.log(`  ✍️  Writer: блок "${block.title}" (${block.type})`);
+    console.log(`  ✍️  Writer: block "${block.title}" (${block.type})`);
     const written = await writeBlock({
       block,
       lessonContext: plan,

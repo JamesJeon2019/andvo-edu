@@ -1,80 +1,84 @@
 const Anthropic = require('@anthropic-ai/sdk');
+const { detectGradeLevel, languageInstructionsFor } = require('./gradeLevel');
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
 /**
- * PLANNER — принимает тему и параметры, возвращает JSON-план урока
+ * PLANNER — takes a topic and parameters, returns a JSON lesson plan.
+ * Subject-agnostic: works for any school subject, not just science.
  */
 async function planLesson({ topic, subject, level, duration = 60, language = 'sv' }) {
   const levelMap = {
-    weak:   'слабый уровень: простые объяснения, аналогии из жизни, минимум терминов',
-    mid:    'средний уровень: стандартная глубина, примеры, базовые формулы',
-    strong: 'продвинутый уровень: строгие определения, сложные задачи, теория'
+    weak:   'basic level: simple explanations, real-life analogies, minimal terminology',
+    mid:    'standard level: normal depth, examples, core terms explained',
+    strong: 'advanced level: rigorous definitions, harder problems, deeper theory'
   };
 
-  const prompt = `Ты — педагогический агент. Создай план урока на ${duration} минут.
+  const gradeLevel = detectGradeLevel(topic, level);
 
-Тема: ${topic}
-Предмет: ${subject}
-Уровень учеников: ${levelMap[level] || levelMap.mid}
-Язык урока: ${language}
+  const prompt = `You are a pedagogical planning agent. Create a lesson plan for ${duration} minutes.
 
-Верни ТОЛЬКО валидный JSON без markdown, без пояснений:
+Subject: ${subject}
+Lesson topic: ${topic}
+Student level: ${levelMap[level] || levelMap.mid}
+Lesson language: ${language}
+
+${languageInstructionsFor(gradeLevel)}
+
+Return ONLY valid JSON, no markdown, no explanations:
 {
-  "title": "название урока",
+  "title": "lesson title",
   "subject": "${subject}",
   "topic": "${topic}",
   "level": "${level}",
   "duration": ${duration},
   "language": "${language}",
-  "goal": "цель урока одним предложением",
-  "keywords": ["ключевое слово 1", "ключевое слово 2", "ключевое слово 3"],
+  "goal": "the lesson's goal in one sentence",
+  "keywords": ["keyword 1", "keyword 2", "keyword 3"],
   "blocks": [
     {
       "id": 1,
       "type": "lecture",
-      "title": "название блока",
+      "title": "block title",
       "duration": 10,
-      "description": "краткое описание что будет в этом блоке",
-      "image_query": "запрос для поиска фото (на английском)",
+      "description": "short description of what this block covers",
       "visible": true
     },
     {
       "id": 2,
       "type": "video",
-      "title": "название видео-блока",
+      "title": "video block title",
       "duration": 5,
-      "description": "что должно быть в видео",
-      "youtube_query": "что искать на YouTube (на языке урока)",
+      "description": "what the video should cover",
+      "youtube_query": "what to search for on YouTube (in the lesson language)",
       "youtube_url": null,
       "visible": true
     },
     {
       "id": 3,
       "type": "task",
-      "title": "название задания",
+      "title": "task title",
       "duration": 8,
-      "description": "описание задания",
-      "image_query": "запрос для фото",
+      "description": "task description",
       "visible": true
     },
     {
       "id": 4,
       "type": "test",
-      "title": "Проверь себя",
+      "title": "Check yourself",
       "duration": 7,
-      "description": "проверочные вопросы",
+      "description": "review questions",
       "visible": true
     }
   ]
 }
 
-Правила:
-- Чередуй типы: lecture → video/task → lecture → task → test
-- Сумма duration всех блоков = ${duration} минут
-- image_query всегда на английском для лучшего поиска фото
-- Минимум 5 блоков, максимум 8
-- Верни только JSON`;
+Rules:
+- Alternate block types: lecture → video/task → lecture → task → test
+- The sum of all block durations must equal ${duration} minutes
+- Minimum 5 blocks, maximum 8
+- Stay strictly within ${subject} — every block must teach ${subject} content. Do not drift into other subjects, even as analogies for block topics (analogies inside the explanations themselves are fine, see language rules above)
+- Return JSON only`;
 
   const response = await client.messages.create({
     model: 'claude-sonnet-4-6',
@@ -84,7 +88,9 @@ async function planLesson({ topic, subject, level, duration = 60, language = 'sv
 
   const text = response.content[0].text.trim();
   const clean = text.replace(/```json|```/g, '').trim();
-  return JSON.parse(clean);
+  const plan = JSON.parse(clean);
+
+  return { ...plan, gradeLevel };
 }
 
 module.exports = { planLesson };

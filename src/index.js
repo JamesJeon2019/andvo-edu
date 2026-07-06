@@ -14,29 +14,29 @@ app.use(cors());
 app.use(express.json());
 app.use(express.static(path.join(__dirname, '../public')));
 
-// Rate limit — защита от спама запросами к AI
+// Rate limit — skydd mot spam av AI-anrop
 const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 минут
+  windowMs: 15 * 60 * 1000, // 15 minuter
   max: 30,
-  message: { error: 'Слишком много запросов, подождите немного.' }
+  message: { error: 'För många förfrågningar, vänta lite.' }
 });
 app.use('/api/', limiter);
 
 // ── Routes ─────────────────────────────────────────
 app.use('/api/lesson', lessonRoutes);
 
-// Главная страница
+// Startsida
 app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, '../public/index.html'));
 });
 
-// Health check для Render
+// Health check för Render
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', version: '1.0.0', service: 'andvo-edu' });
 });
 
 // ── Start ───────────────────────────────────────────
 app.listen(PORT, () => {
-  console.log(`✅ Andvo Edu запущен на порту ${PORT}`);
+  console.log(`✅ Andvo Edu igång på port ${PORT}`);
   console.log(`🌐 http://localhost:${PORT}`);
 });
