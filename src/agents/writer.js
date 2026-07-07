@@ -18,6 +18,10 @@ const VOICE_STYLE_INSTR = `VOICE_TEXT STYLE (STRICT):
 
 const SCENE_LEN_RULE = 'Max 2-3 sentences per scene (voice_text) — short, simple sentences, ONE concept at a time.';
 
+const topicStrictnessRule = (topic) => `Write content ONLY about ${topic}.
+Do not include related topics, prerequisites or extensions.
+Stay strictly on the exact topic specified.`;
+
 /**
  * Genererar innehåll för ett enskilt lektionsblock. Fungerar likadant oavsett
  * ämne — prompten tar bara emot ämnet som en variabel, ingen ämnesspecifik logik.
@@ -55,7 +59,8 @@ Rules:
 - 4-6 scenes per block
 - First scene is a short "hook", 1 sentence to grab attention (emphasis: false)
 - Exactly one scene is the block's main idea, mark it "emphasis": true
-- The rest are explanation scenes. ${SCENE_LEN_RULE}`;
+- The rest are explanation scenes. ${SCENE_LEN_RULE}
+- ${topicStrictnessRule(lessonContext.topic)}`;
 
   } else if (block.type === 'task') {
     prompt = `You are a ${lessonContext.subject} teacher. Write a lesson task as narrated scenes.
@@ -81,7 +86,8 @@ Return ONLY JSON:
 
 Rules:
 - Exactly 2 scenes: (1) explanation, (2) the task itself with "emphasis": true
-- ${SCENE_LEN_RULE}`;
+- ${SCENE_LEN_RULE}
+- ${topicStrictnessRule(lessonContext.topic)}`;
 
   } else if (block.type === 'test') {
     prompt = `You are a ${lessonContext.subject} teacher. Create review questions as narrated scenes — one scene = one question.
@@ -102,7 +108,8 @@ Return ONLY JSON:
 
 Rules:
 - 3-5 scenes, one scene = one question
-- Each voice_text must start with the question number, e.g. "1. ..."`;
+- Each voice_text must start with the question number, e.g. "1. ..."
+- ${topicStrictnessRule(lessonContext.topic)}`;
 
   } else if (block.type === 'video') {
     // Minimalt innehåll för video-block — läraren väljer/klistrar in länken själv
@@ -133,21 +140,56 @@ Rules:
   const clean = text.replace(/```json|```/g, '').trim();
   const content = JSON.parse(clean);
 
-  if (Array.isArray(content.scenes)) {
-    await illustrateScenes(content.scenes, block.type, lessonContext.subject);
-  }
-
   return { ...block, content };
 }
 
 /**
- * Genererar en SVG-illustration per scen, en i taget (sekventiellt, inte
- * parallellt). Ett enskilt misslyckande får aldrig stoppa hela lektionen —
- * scenen får då bara svg_content: null.
+ * Block-typer vars scener alltid ska ha en illustration (video-block klarar
+ * sig med sin egen intro-text, se writeBlock ovan).
  */
-async function illustrateScenes(scenes, blockType, subject) {
-  for (const scene of scenes) {
-    scene.svg_content = await generateSVGWithRetry(scene.voice_text, blockType, subject);
+const ILLUSTRATED_TYPES = ['lecture', 'task', 'test'];
+
+function illustrableScenesOf(block) {
+  if (!ILLUSTRATED_TYPES.includes(block.type)) return [];
+  const scenes = block.content && block.content.scenes;
+  return Array.isArray(scenes) ? scenes : [];
+}
+
+/**
+ * Räknar hur många scener i lektionen som behöver en illustration —
+ * används av /generate för att sätta svg_total inför förloppsindikatorn.
+ */
+function countIllustrableScenes(blocks) {
+  return blocks.reduce((sum, b) => sum + illustrableScenesOf(b).length, 0);
+}
+
+/**
+ * Genererar en SVG-illustration per scen för hela lektionen, en i taget
+ * (sekventiellt, inte parallellt) — anropar onProgress(done, total) efter
+ * varje enskild illustration så att /generate kan uppdatera förloppet.
+ */
+async function illustrateLesson(blocks, subject, onProgress) {
+  const total = countIllustrableScenes(blocks);
+  let done = 0;
+  if (onProgress) onProgress(done, total);
+
+  for (const block of blocks) {
+    for (const scene of illustrableScenesOf(block)) {
+      scene.svg_content = await generateSVGWithRetry(scene.voice_text, block.type, subject);
+      done++;
+      if (onProgress) onProgress(done, total);
+    }
+  }
+
+  return total;
+}
+
+/**
+ * Illustrerar om scenerna för ett enskilt block (t.ex. efter en AI-omskrivning).
+ */
+async function illustrateBlockScenes(block, subject) {
+  for (const scene of illustrableScenesOf(block)) {
+    scene.svg_content = await generateSVGWithRetry(scene.voice_text, block.type, subject);
   }
 }
 
@@ -194,4 +236,4 @@ async function writeLesson({ plan, level, language }) {
   return { ...plan, blocks };
 }
 
-module.exports = { writeLesson, writeBlock };
+module.exports = { writeLesson, writeBlock, illustrateLesson, illustrateBlockScenes, countIllustrableScenes };

@@ -77,6 +77,10 @@ Rules:
 - The sum of all block durations must equal ${duration} minutes
 - Minimum 5 blocks, maximum 8
 - Stay strictly within ${subject} — every block must teach ${subject} content. Do not drift into other subjects, even as analogies for block topics (analogies inside the explanations themselves are fine, see language rules above)
+- Generate a lesson covering STRICTLY this exact topic: ${topic}
+  Do not add related subjects or expand to broader curriculum.
+  Every single block must be directly and only about ${topic}.
+  If unsure whether something belongs - leave it out.
 - Return JSON only`;
 
   const response = await client.messages.create({
