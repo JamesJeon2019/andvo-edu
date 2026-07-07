@@ -1,11 +1,12 @@
 const Anthropic = require('@anthropic-ai/sdk');
-const { detectGradeLevel, languageInstructionsFor } = require('./gradeLevel');
+const { languageInstructionsFor } = require('./level');
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
 /**
  * PLANNER — takes a topic and parameters, returns a JSON lesson plan.
  * Subject-agnostic: works for any school subject, not just science.
+ * Always plans for Swedish year 7-9 — see level.js.
  */
 async function planLesson({ topic, subject, level, duration = 60, language = 'sv' }) {
   const levelMap = {
@@ -14,8 +15,6 @@ async function planLesson({ topic, subject, level, duration = 60, language = 'sv
     strong: 'advanced level: rigorous definitions, harder problems, deeper theory'
   };
 
-  const gradeLevel = detectGradeLevel(topic, level);
-
   const prompt = `You are a pedagogical planning agent. Create a lesson plan for ${duration} minutes.
 
 Subject: ${subject}
@@ -23,7 +22,7 @@ Lesson topic: ${topic}
 Student level: ${levelMap[level] || levelMap.mid}
 Lesson language: ${language}
 
-${languageInstructionsFor(gradeLevel)}
+${languageInstructionsFor(level)}
 
 Return ONLY valid JSON, no markdown, no explanations:
 {
@@ -34,7 +33,6 @@ Return ONLY valid JSON, no markdown, no explanations:
   "duration": ${duration},
   "language": "${language}",
   "goal": "the lesson's goal in one sentence",
-  "keywords": ["keyword 1", "keyword 2", "keyword 3"],
   "blocks": [
     {
       "id": 1,
@@ -91,7 +89,7 @@ Rules:
   const clean = text.replace(/```json|```/g, '').trim();
   const plan = JSON.parse(clean);
 
-  return { ...ensureVideoBlock(plan, { topic, language }), gradeLevel };
+  return ensureVideoBlock(plan, { topic, language });
 }
 
 /**

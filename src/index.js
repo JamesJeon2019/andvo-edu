@@ -5,7 +5,6 @@ const path = require('path');
 const rateLimit = require('express-rate-limit');
 
 const lessonRoutes = require('./routes/lesson');
-const imageRoutes = require('./routes/image');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -25,7 +24,6 @@ app.use('/api/', limiter);
 
 // ── Routes ─────────────────────────────────────────
 app.use('/api/lesson', lessonRoutes);
-app.use('/api/image', imageRoutes);
 
 // Startsida
 app.get('/', (req, res) => {

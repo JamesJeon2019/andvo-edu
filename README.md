@@ -50,4 +50,4 @@ npm run dev
 - **AI**: Claude API (Anthropic)
 - **Frontend**: HTML/CSS/JS (ingen framework)
 - **Hosting**: Render
-- **Nästa steg**: PostgreSQL, OpenAI TTS, Google Classroom
+- **Nästa steg**: PostgreSQL, Google Classroom
