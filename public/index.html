@@ -142,6 +142,7 @@
   .tts-btn{background:var(--accent);border:none;width:32px;height:32px;border-radius:50%;color:#fff;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:13px;transition:opacity .2s;flex-shrink:0;}
   .tts-btn:hover{opacity:.85;}
   .tts-btn.stop{background:var(--bg);border:1px solid var(--border);color:var(--muted);}
+  .tts-btn.toggle{width:auto;height:32px;border-radius:16px;padding:0 14px;gap:6px;font-size:12px;font-family:'Inter',sans-serif;white-space:nowrap;}
   .tts-label{font-size:11px;color:var(--muted);white-space:nowrap;}
   .tts-select{background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:6px;font-family:'Inter',sans-serif;font-size:12px;padding:5px 8px;max-width:220px;}
   .tts-range{width:90px;accent-color:var(--accent);}
@@ -341,7 +342,7 @@ function buildTtsBar(idx, voiceText) {
   voiceWordMaps[idx] = map;
   return `
     <div class="tts-bar">
-      <button class="tts-btn" id="ttsPlay${idx}" onclick="toggleSpeak(${idx})" title="Läs upp / Pausa">▶️</button>
+      <button class="tts-btn toggle" id="ttsPlay${idx}" onclick="toggleSpeak(${idx})" title="Läs upp / Pausa">▶️ Spela upp</button>
       <button class="tts-btn stop" onclick="stopSpeech()" title="Stoppa">⏹</button>
       <span class="tts-label">Röst</span>
       <select class="tts-select" id="ttsVoice${idx}"></select>
@@ -413,7 +414,7 @@ function stopSpeech() {
 
 function updatePlayButton(idx) {
   const btn = document.getElementById(`ttsPlay${idx}`);
-  if (btn) btn.textContent = (isSpeaking && !isPaused) ? '⏸' : '▶️';
+  if (btn) btn.textContent = (isSpeaking && !isPaused) ? '⏸ Pausa' : '▶️ Spela upp';
 }
 
 function highlightWord(idx, wid) {
@@ -464,7 +465,7 @@ function buildScenePlayer(idx, scenes, opts = {}) {
 
   return `
     <div class="tts-bar">
-      <button class="tts-btn" id="ttsPlay${idx}" onclick="toggleSceneChain(${idx})" title="Spela upp / Pausa hela blocket">▶️</button>
+      <button class="tts-btn toggle" id="ttsPlay${idx}" onclick="toggleSceneChain(${idx})" title="Spela upp / Pausa hela blocket">▶️ Spela upp</button>
       <button class="tts-btn stop" onclick="stopSpeech()" title="Stoppa">⏹</button>
       <span class="tts-label">Röst</span>
       <select class="tts-select" id="ttsVoice${idx}"></select>
