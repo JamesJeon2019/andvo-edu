@@ -1,5 +1,6 @@
 const Anthropic = require('@anthropic-ai/sdk');
 const { languageInstructionsFor } = require('./level');
+const { generateSVG } = require('./illustrator');
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
@@ -132,7 +133,45 @@ Rules:
   const clean = text.replace(/```json|```/g, '').trim();
   const content = JSON.parse(clean);
 
+  if (Array.isArray(content.scenes)) {
+    await illustrateScenes(content.scenes, block.type, lessonContext.subject);
+  }
+
   return { ...block, content };
+}
+
+/**
+ * Genererar en SVG-illustration per scen, en i taget (sekventiellt, inte
+ * parallellt). Ett enskilt misslyckande får aldrig stoppa hela lektionen —
+ * scenen får då bara svg_content: null.
+ */
+async function illustrateScenes(scenes, blockType, subject) {
+  for (const scene of scenes) {
+    scene.svg_content = await generateSVGWithRetry(scene.voice_text, blockType, subject);
+  }
+}
+
+/**
+ * Anropar illustrator-agenten. Vid rate limit (429) väntas 2 sekunder och
+ * anropet görs om exakt en gång — misslyckas det igen, eller vid något annat
+ * fel, loggas det och funktionen returnerar null istället för att kasta.
+ */
+async function generateSVGWithRetry(voiceText, blockType, subject) {
+  try {
+    return await generateSVG(voiceText, blockType, subject);
+  } catch (err) {
+    if (err.status === 429) {
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      try {
+        return await generateSVG(voiceText, blockType, subject);
+      } catch (retryErr) {
+        console.error('Illustrator error (after 429 retry):', retryErr.message);
+        return null;
+      }
+    }
+    console.error('Illustrator error:', err.message);
+    return null;
+  }
 }
 
 /**
