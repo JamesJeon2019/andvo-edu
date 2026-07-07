@@ -26,9 +26,18 @@ Strict rules:
 - Maximum 5 visual elements on screen
 - ALL text labels inside SVG must be in Swedish only, never English
 - Font size minimum 16px for all labels
-- Black and white base, color ONLY for 1-2 most important elements
+- Add white background as first SVG element:
+   <rect width='400' height='300' fill='white'/>
+- All text labels: dark color #333333, never white or light colors
+- All lines, arrows, borders: dark color #333333 or #000000
+- Main elements background: white #ffffff with dark border
+- Accent color for 1-2 key elements only: use #2563eb (blue)
+   or #dc2626 (red) - never use light or pastel colors
+- Every element must have high contrast against white background
+- Never use: white text, light grey, yellow, light blue,
+   or any color that is hard to see on white background
 - No animation of any kind - completely static SVG
-- No decorative elements, no background fill, no outer border
+- No decorative elements beyond the white background above, no outer border
 - No script tags or JavaScript inside SVG
 - Scientific accuracy required - if unsure draw simpler not wrong
 - Return ONLY SVG code starting with <svg, absolutely nothing else${instructionLine}`;

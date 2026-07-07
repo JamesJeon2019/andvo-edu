@@ -43,8 +43,8 @@
   .lstep.active{color:var(--accent);}
   .lstep.done{color:var(--green);}
   .lstep-dot{width:8px;height:8px;border-radius:50%;background:var(--border);flex-shrink:0;transition:background .3s;}
-  .lstep.active .lstep-dot{background:var(--accent);}
   .lstep.done .lstep-dot{background:var(--green);}
+  .lstep.active .lstep-dot{width:12px;height:12px;border-radius:50%;background:transparent;border:2px solid var(--border);border-top-color:var(--accent);animation:spin .8s linear infinite;}
 
   /* ── EDITOR ── */
   #editor{display:none;flex-direction:column;min-height:100vh;}
@@ -163,6 +163,22 @@
   .scene-text{font-size:14px;line-height:1.8;color:#b8bcd4;flex:1;}
   .scene.scene-emphasis .scene-text{color:var(--text);}
   .scene-answer{margin:0 16px 16px;width:calc(100% - 32px);}
+
+  /* ── Scen-illustrationer (SVG / bild) ── */
+  .scene-visual{padding:0 16px 14px;}
+  .scene-visual svg{width:100%;height:auto;max-height:320px;display:block;}
+  .scene-visual .scene-img{width:100%;height:auto;max-height:320px;object-fit:contain;border-radius:8px;display:block;}
+  .scene-visual-fallback{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;padding:24px 16px;text-align:center;}
+  .scene-visual-icon{font-size:40px;line-height:1;}
+  .scene-visual-fallback-text{font-size:13px;color:var(--muted);max-width:340px;line-height:1.6;}
+  .scene-visual-loading{display:flex;align-items:center;justify-content:center;padding:34px;}
+  .spinner.small{width:24px;height:24px;border-width:3px;}
+
+  .scene-controls{padding:0 16px 14px;display:flex;flex-direction:column;gap:8px;}
+  .scene-ctrl-row{display:flex;gap:8px;flex-wrap:wrap;}
+  .scene-instr-row,.scene-replace-row,.scene-paste-row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;}
+  .scene-instr-row .tinput,.scene-paste-row .tinput{min-height:auto;padding:8px 10px;flex:1;min-width:180px;}
+  .scene-err{color:var(--red);font-size:12px;}
 </style>
 </head>
 <body>
@@ -206,11 +222,12 @@
   <div class="spinner"></div>
   <div style="color:var(--accent);font-weight:600;">Genererar lektion...</div>
   <div class="load-steps">
-    <div class="lstep" id="ls1"><div class="lstep-dot"></div>Planner: skapar lektionsplan</div>
-    <div class="lstep" id="ls2"><div class="lstep-dot"></div>Writer: genererar innehåll</div>
-    <div class="lstep" id="ls3"><div class="lstep-dot"></div>Checker: kontrollerar fakta</div>
-    <div class="lstep" id="ls4"><div class="lstep-dot"></div>Formaterar lektion</div>
+    <div class="lstep" id="ls-plan"><div class="lstep-dot"></div><span>Skapar lektionsplan...</span></div>
+    <div class="lstep" id="ls-content"><div class="lstep-dot"></div><span>Genererar innehåll...</span></div>
+    <div class="lstep" id="ls-svg"><div class="lstep-dot"></div><span>Skapar illustrationer...</span></div>
+    <div class="lstep" id="ls-check"><div class="lstep-dot"></div><span>Granskar fakta...</span></div>
   </div>
+  <div class="error-box" id="loadErrBox"></div>
 </div>
 
 <!-- EDITOR -->
@@ -439,6 +456,8 @@ function buildScenePlayer(idx, scenes, opts = {}) {
         <button class="scene-play" onclick="playScene(${idx},${si})" title="Läs upp denna scen">▶</button>
         <div class="scene-text" id="sceneText${idx}_${si}">${html}</div>
       </div>
+      <div class="scene-visual" id="sceneVisual${idx}_${si}">${sceneVisualInnerHtml(sc)}</div>
+      <div class="scene-controls" id="sceneControls${idx}_${si}">${sceneControlsInnerHtml(idx, si)}</div>
       ${opts.answers ? `<textarea class="tinput scene-answer" placeholder="Svar..."></textarea>` : ''}
     </div>`;
   }).join('');
@@ -453,6 +472,187 @@ function buildScenePlayer(idx, scenes, opts = {}) {
       <input type="range" class="tts-range" id="ttsRate${idx}" min="0.6" max="1.3" step="0.05" value="1"/>
     </div>
     <div class="scene-list">${scenesHtml}</div>`;
+}
+
+/* ══════════════════ SCEN-ILLUSTRATIONER (SVG / uppladdad bild / länk) ══════════════════ */
+const SUBJECT_ICONS = { Kemi: '🧪', Biologi: '🧬', Fysik: '⚛️', Matematik: '📐' };
+function subjectIcon(subject) { return SUBJECT_ICONS[subject] || '📘'; }
+
+// Sista säkerhetsnät innan innerHTML — servern sanerar redan svg_content, men
+// vi tar bort eventuella script-taggar en gång till innan det sätts in i DOM.
+function sanitizeSvgForDom(svg) {
+  if (!svg) return null;
+  const cleaned = svg.replace(/<script[\s\S]*?<\/script>/gi, '').trim();
+  if (!/^<svg[\s\S]*<\/svg>$/i.test(cleaned)) return null;
+  return cleaned;
+}
+
+// Prioritetsordning: uppladdad fil → inklistrad länk → AI-genererad SVG → ikon+text.
+// Visar aldrig en tom grå ruta.
+function sceneVisualInnerHtml(sc) {
+  if (sc.custom_image) {
+    return `<img src="${sc.custom_image}" alt="" class="scene-img"/>`;
+  }
+  if (sc.custom_image_url) {
+    return `<img src="${escapeHtml(sc.custom_image_url)}" alt="" class="scene-img"/>`;
+  }
+  const svg = sanitizeSvgForDom(sc.svg_content);
+  if (svg) return svg;
+  const icon = subjectIcon(lesson.subject);
+  return `<div class="scene-visual-fallback"><div class="scene-visual-icon">${icon}</div><div class="scene-visual-fallback-text">${escapeHtml(sc.voice_text || '')}</div></div>`;
+}
+
+function sceneControlsInnerHtml(idx, si) {
+  const sc = (sceneData[idx] || [])[si] || {};
+  const hasCustom = !!(sc.custom_image || sc.custom_image_url);
+  return `
+    <div class="scene-ctrl-row">
+      <button class="abtn" onclick="regenerateSvg(${idx},${si})">🔄 Rita om</button>
+      <button class="abtn" onclick="toggleInstructionRow(${idx},${si})">✏️ Ge instruktion</button>
+      <button class="abtn" onclick="toggleReplaceRow(${idx},${si})">📁 Ersätt bild</button>
+      ${hasCustom ? `<button class="abtn" onclick="revertToSvg(${idx},${si})">↩ Återgå till SVG</button>` : ''}
+    </div>
+    <div class="scene-instr-row" id="sceneInstrRow${idx}_${si}" style="display:none">
+      <input class="tinput" id="sceneInstrInput${idx}_${si}" placeholder="T.ex. 'visa pil från Na till Cl'"/>
+      <button class="abtn" onclick="submitInstruction(${idx},${si})">Skicka →</button>
+    </div>
+    <div class="scene-replace-row" id="sceneReplaceRow${idx}_${si}" style="display:none">
+      <button class="abtn" onclick="document.getElementById('sceneFile${idx}_${si}').click()">📤 Ladda upp fil</button>
+      <input type="file" id="sceneFile${idx}_${si}" accept=".jpg,.jpeg,.png,.svg,image/jpeg,image/png,image/svg+xml" style="display:none" onchange="handleFileUpload(${idx},${si},this)"/>
+      <button class="abtn" onclick="togglePasteRow(${idx},${si})">🔗 Klistra in länk</button>
+      <div class="scene-paste-row" id="scenePasteRow${idx}_${si}" style="display:none">
+        <input class="tinput" id="sceneUrlInput${idx}_${si}" placeholder="https://..."/>
+        <button class="abtn" onclick="submitImageUrl(${idx},${si})">Använd →</button>
+      </div>
+    </div>
+    <div class="scene-err" id="sceneErr${idx}_${si}" style="display:none"></div>`;
+}
+
+function refreshSceneVisual(idx, si) {
+  const sc = sceneData[idx][si];
+  const visualEl = document.getElementById(`sceneVisual${idx}_${si}`);
+  if (visualEl) visualEl.innerHTML = sceneVisualInnerHtml(sc);
+  const ctrlEl = document.getElementById(`sceneControls${idx}_${si}`);
+  if (ctrlEl) ctrlEl.innerHTML = sceneControlsInnerHtml(idx, si);
+}
+
+function setSceneLoading(idx, si, loading) {
+  const el = document.getElementById(`sceneVisual${idx}_${si}`);
+  if (el && loading) el.innerHTML = `<div class="scene-visual-loading"><div class="spinner small"></div></div>`;
+}
+
+function showSceneError(idx, si, message) {
+  const el = document.getElementById(`sceneErr${idx}_${si}`);
+  if (el) { el.textContent = message; el.style.display = 'block'; }
+}
+
+function clearSceneError(idx, si) {
+  const el = document.getElementById(`sceneErr${idx}_${si}`);
+  if (el) { el.textContent = ''; el.style.display = 'none'; }
+}
+
+function toggleInstructionRow(idx, si) {
+  const row = document.getElementById(`sceneInstrRow${idx}_${si}`);
+  if (row) row.style.display = (row.style.display === 'none') ? 'flex' : 'none';
+}
+
+function toggleReplaceRow(idx, si) {
+  const row = document.getElementById(`sceneReplaceRow${idx}_${si}`);
+  if (row) row.style.display = (row.style.display === 'none') ? 'flex' : 'none';
+}
+
+function togglePasteRow(idx, si) {
+  const row = document.getElementById(`scenePasteRow${idx}_${si}`);
+  if (row) row.style.display = (row.style.display === 'none') ? 'flex' : 'none';
+}
+
+async function callRegenerateSvg(idx, si, instruction) {
+  const sc = sceneData[idx][si];
+  const block = lesson.blocks[idx];
+  clearSceneError(idx, si);
+  setSceneLoading(idx, si, true);
+  try {
+    const res = await fetch(`/api/lesson/${lessonId}/block/${block.id}/regenerate-svg`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sceneIndex: si, instruction: instruction || undefined })
+    });
+    const data = await res.json();
+    if (!res.ok || !data.svg_content) throw new Error(data.error || 'Okänt fel');
+
+    sc.svg_content = data.svg_content;
+    sc.custom_image = null;
+    sc.custom_image_url = null;
+    refreshSceneVisual(idx, si);
+  } catch (e) {
+    refreshSceneVisual(idx, si);
+    showSceneError(idx, si, instruction
+      ? 'Kunde inte uppdatera illustration, försök igen'
+      : 'Kunde inte skapa ny illustration, försök igen');
+  }
+}
+
+function regenerateSvg(idx, si) {
+  callRegenerateSvg(idx, si, null);
+}
+
+function submitInstruction(idx, si) {
+  const input = document.getElementById(`sceneInstrInput${idx}_${si}`);
+  const instruction = input ? input.value.trim() : '';
+  if (!instruction) return;
+  callRegenerateSvg(idx, si, instruction);
+}
+
+function handleFileUpload(idx, si, inputEl) {
+  const file = inputEl.files && inputEl.files[0];
+  if (!file) return;
+  const allowed = ['image/jpeg', 'image/png', 'image/svg+xml'];
+  if (!allowed.includes(file.type)) {
+    showSceneError(idx, si, 'Endast JPG, PNG eller SVG-filer stöds');
+    inputEl.value = '';
+    return;
+  }
+  const reader = new FileReader();
+  reader.onload = () => {
+    const sc = sceneData[idx][si];
+    sc.custom_image = reader.result;
+    sc.custom_image_url = null;
+    clearSceneError(idx, si);
+    refreshSceneVisual(idx, si);
+  };
+  reader.readAsDataURL(file);
+  inputEl.value = '';
+}
+
+async function submitImageUrl(idx, si) {
+  const input = document.getElementById(`sceneUrlInput${idx}_${si}`);
+  const url = input ? input.value.trim() : '';
+  if (!url) return;
+  clearSceneError(idx, si);
+  try {
+    const res = await fetch('/api/image/validate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url })
+    });
+    const data = await res.json();
+    if (!data.valid) { showSceneError(idx, si, 'Länken verkar inte vara en bild, försök igen'); return; }
+
+    const sc = sceneData[idx][si];
+    sc.custom_image_url = url;
+    sc.custom_image = null;
+    refreshSceneVisual(idx, si);
+  } catch (e) {
+    showSceneError(idx, si, 'Länken verkar inte vara en bild, försök igen');
+  }
+}
+
+function revertToSvg(idx, si) {
+  const sc = sceneData[idx][si];
+  sc.custom_image = null;
+  sc.custom_image_url = null;
+  clearSceneError(idx, si);
+  refreshSceneVisual(idx, si);
 }
 
 function currentVoiceAndRate(idx) {
@@ -552,6 +752,31 @@ function setLvl(l) {
   document.getElementById(idFor[l]).classList.add('selected');
 }
 
+const STEP_ORDER = ['plan', 'content', 'svg', 'check', 'done'];
+const STEP_DEFAULT_TEXT = {
+  plan: 'Skapar lektionsplan...',
+  content: 'Genererar innehåll...',
+  svg: 'Skapar illustrationer...',
+  check: 'Granskar fakta...'
+};
+const STEP_DONE_TEXT = {
+  plan: '✅ Lektionsplan klar',
+  content: '✅ Innehåll genererat',
+  svg: '✅ Illustrationer klara',
+  check: '✅ Faktagranskning klar'
+};
+let statusPollTimer = null;
+
+function resetLoadingSteps() {
+  ['plan', 'content', 'svg', 'check'].forEach(s => {
+    const el = document.getElementById(`ls-${s}`);
+    if (el) { el.className = 'lstep'; el.querySelector('span').textContent = STEP_DEFAULT_TEXT[s]; }
+  });
+  const errBox = document.getElementById('loadErrBox');
+  errBox.style.display = 'none';
+  errBox.textContent = '';
+}
+
 async function generateLesson() {
   const topic = document.getElementById('topic').value.trim();
   const subject = document.getElementById('subject').value.trim();
@@ -564,15 +789,7 @@ async function generateLesson() {
 
   document.getElementById('setup').style.display = 'none';
   document.getElementById('loading').style.display = 'flex';
-
-  // Animate loading steps
-  const steps = ['ls1','ls2','ls3','ls4'];
-  let si = 0;
-  const stepTimer = setInterval(() => {
-    if (si > 0) document.getElementById(steps[si-1]).className = 'lstep done';
-    if (si < steps.length) { document.getElementById(steps[si]).className = 'lstep active'; si++; }
-    else clearInterval(stepTimer);
-  }, 2500);
+  resetLoadingSteps();
 
   try {
     const res = await fetch('/api/lesson/generate', {
@@ -581,16 +798,11 @@ async function generateLesson() {
       body: JSON.stringify({ topic, subject, level: lvl, language, duration: 60 })
     });
 
-    clearInterval(stepTimer);
-    steps.forEach(s => document.getElementById(s).className = 'lstep done');
-
     const data = await res.json();
     if (!data.success) throw new Error(data.error || 'Okänt fel');
 
     lessonId = data.lessonId;
-    lesson = data.lesson;
-
-    setTimeout(() => renderEditor(), 400);
+    pollLessonStatus();
 
   } catch (e) {
     document.getElementById('loading').style.display = 'none';
@@ -598,6 +810,68 @@ async function generateLesson() {
     errBox.textContent = 'Fel: ' + e.message;
     errBox.style.display = 'block';
   }
+}
+
+function pollLessonStatus() {
+  if (statusPollTimer) clearInterval(statusPollTimer);
+  checkLessonStatus();
+  statusPollTimer = setInterval(checkLessonStatus, 3000);
+}
+
+function stopStatusPolling() {
+  if (statusPollTimer) { clearInterval(statusPollTimer); statusPollTimer = null; }
+}
+
+function showLoadError(message) {
+  stopStatusPolling();
+  const errBox = document.getElementById('loadErrBox');
+  errBox.textContent = 'Fel: ' + message;
+  errBox.style.display = 'block';
+}
+
+async function checkLessonStatus() {
+  try {
+    const res = await fetch(`/api/lesson/${lessonId}/status`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Okänt fel');
+
+    if (data.error) { showLoadError(data.error); return; }
+
+    updateLoadingSteps(data);
+
+    if (data.step === 'done') {
+      stopStatusPolling();
+      const lres = await fetch(`/api/lesson/${lessonId}`);
+      const ldata = await lres.json();
+      if (!ldata.success) throw new Error(ldata.error || 'Kunde inte hämta lektionen');
+      lesson = ldata.lesson;
+      setTimeout(() => renderEditor(), 300);
+    }
+  } catch (e) {
+    showLoadError(e.message);
+  }
+}
+
+function updateLoadingSteps(data) {
+  const curIdx = STEP_ORDER.indexOf(data.step);
+  ['plan', 'content', 'svg', 'check'].forEach(s => {
+    const stepIdx = STEP_ORDER.indexOf(s);
+    const el = document.getElementById(`ls-${s}`);
+    if (!el) return;
+    const label = el.querySelector('span');
+    if (stepIdx < curIdx) {
+      el.className = 'lstep done';
+      label.textContent = STEP_DONE_TEXT[s];
+    } else if (stepIdx === curIdx) {
+      el.className = 'lstep active';
+      label.textContent = (s === 'svg')
+        ? `⏳ Skapar illustrationer... (${data.svg_done} av ${data.svg_total})`
+        : `⏳ ${STEP_DEFAULT_TEXT[s]}`;
+    } else {
+      el.className = 'lstep';
+      label.textContent = STEP_DEFAULT_TEXT[s];
+    }
+  });
 }
 
 function renderEditor() {

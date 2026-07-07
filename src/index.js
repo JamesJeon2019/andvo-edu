@@ -5,6 +5,7 @@ const path = require('path');
 const rateLimit = require('express-rate-limit');
 
 const lessonRoutes = require('./routes/lesson');
+const imageRoutes = require('./routes/image');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -14,16 +15,19 @@ app.use(cors());
 app.use(express.json());
 app.use(express.static(path.join(__dirname, '../public')));
 
-// Rate limit — skydd mot spam av AI-anrop
+// Rate limit — skydd mot spam av AI-anrop. /status pollas var 3:e sekund av
+// frontend under generering och ska inte räknas mot samma gräns.
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minuter
   max: 30,
-  message: { error: 'För många förfrågningar, vänta lite.' }
+  message: { error: 'För många förfrågningar, vänta lite.' },
+  skip: (req) => req.method === 'GET' && /\/status$/.test(req.path)
 });
 app.use('/api/', limiter);
 
 // ── Routes ─────────────────────────────────────────
 app.use('/api/lesson', lessonRoutes);
+app.use('/api/image', imageRoutes);
 
 // Startsida
 app.get('/', (req, res) => {
