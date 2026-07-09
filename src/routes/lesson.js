@@ -1,7 +1,8 @@
 const express = require('express');
 const router = express.Router();
 const { v4: uuidv4 } = require('uuid');
-const { planLesson } = require('../agents/planner');
+const { planLesson, planLessonFromMaterial } = require('../agents/planner');
+const { extractTextbookMaterial } = require('../agents/textbookReader');
 const { writeLesson, writeBlock, illustrateLesson, illustrateBlockScenes, countIllustrableScenes } = require('../agents/writer');
 const { checkLesson } = require('../agents/checker');
 const { generateSVG } = require('../agents/illustrator');
@@ -14,11 +15,14 @@ const lessons = new Map();
 const progress = new Map();
 
 const STATUS_MESSAGES = {
+  read: 'Läser läroboksfoton...',
   plan: 'Skapar lektionsplan...',
   content: 'Genererar innehåll...',
   check: 'Granskar fakta...',
   done: 'Lektion klar!'
 };
+
+const MAX_MATERIAL_PAGES = 8;
 
 function setProgress(lessonId, patch) {
   const current = progress.get(lessonId) || { step: 'plan', svg_done: 0, svg_total: 0, error: null };
@@ -97,6 +101,95 @@ async function runGeneration(lessonId, { topic, subject, level, duration, langua
   } catch (error) {
     console.error('❌ Fel vid generering:', error.message);
     setProgress(lessonId, { error: 'Fel vid generering av lektion' });
+  }
+}
+
+/**
+ * POST /api/lesson/generate-from-material
+ * "Skapa från lärobok" — läraren laddar upp foton av läroboksidor (base64
+ * data-URL:er). Claude Vision läser av texten och hela lektionen genereras
+ * sedan strikt utifrån den — inget läggs till utanför det uppladdade
+ * materialet. Svarar direkt med ett lessonId, precis som /generate.
+ */
+router.post('/generate-from-material', (req, res) => {
+  const { images, subject, level, duration, language } = req.body;
+
+  if (!subject || !level) {
+    return res.status(400).json({ error: 'subject och level krävs' });
+  }
+  if (!Array.isArray(images) || images.length === 0) {
+    return res.status(400).json({ error: 'Minst ett foto av en läroboksida krävs' });
+  }
+  if (images.length > MAX_MATERIAL_PAGES) {
+    return res.status(400).json({ error: `Max ${MAX_MATERIAL_PAGES} sidor åt gången` });
+  }
+
+  const lessonId = uuidv4();
+  setProgress(lessonId, { step: 'read', svg_done: 0, svg_total: 0, error: null });
+
+  res.json({ success: true, lessonId });
+
+  runGenerationFromMaterial(lessonId, {
+    images,
+    subject,
+    level,
+    duration: duration || 60,
+    language: language || 'sv'
+  });
+});
+
+async function runGenerationFromMaterial(lessonId, { images, subject, level, duration, language }) {
+  console.log(`\n📖 Genererar lektion från lärobok | ${subject} | ${level}`);
+
+  try {
+    // ── Steg 0: Läs läroboksfoton (Claude Vision) ────
+    console.log('  👁  Läser läroboksfoton...');
+    const { text: material } = await extractTextbookMaterial(images, language);
+    console.log(`  ✅ Text inläst (${material.length} tecken)`);
+
+    // ── Steg 1: Planner (endast från materialet) ────
+    setProgress(lessonId, { step: 'plan' });
+    console.log('  🗓  Planner: skapar plan från material...');
+    const plan = await planLessonFromMaterial({ material, subject, level, duration, language });
+    console.log(`  ✅ Plan klar: ${plan.blocks.length} block`);
+
+    // ── Steg 2: Writer (text) ───────────────────────
+    setProgress(lessonId, { step: 'content' });
+    console.log('  ✍️  Writer: genererar innehåll...');
+    const written = await writeLesson({ plan, level, language });
+    console.log('  ✅ Innehåll klart');
+
+    // ── Steg 3: Illustrator (SVG per scen) ──────────
+    const svgTotal = countIllustrableScenes(written.blocks);
+    setProgress(lessonId, { step: 'svg', svg_done: 0, svg_total: svgTotal });
+    console.log(`  🎨 Illustrator: skapar ${svgTotal} illustrationer...`);
+    await illustrateLesson(written.blocks, subject, (done, total) => {
+      setProgress(lessonId, { step: 'svg', svg_done: done, svg_total: total });
+    });
+    console.log('  ✅ Illustrationer klara');
+
+    // ── Steg 4: Checker ─────────────────────────────
+    setProgress(lessonId, { step: 'check' });
+    console.log('  🔍 Checker: kontrollerar fakta...');
+    const checkResult = await checkLesson({ lesson: written, subject });
+    console.log(`  ✅ Kontroll: ${checkResult.status} — ${checkResult.summary}`);
+
+    // ── Sätter ihop den färdiga lektionen ────────────────────
+    const finalLesson = {
+      id: lessonId,
+      ...written,
+      check: checkResult,
+      source: 'material',
+      createdAt: new Date().toISOString()
+    };
+    lessons.set(lessonId, finalLesson);
+
+    setProgress(lessonId, { step: 'done', svg_done: svgTotal, svg_total: svgTotal });
+    console.log(`  🎉 Lektion klar: ID ${lessonId}\n`);
+
+  } catch (error) {
+    console.error('❌ Fel vid generering från lärobok:', error.message);
+    setProgress(lessonId, { error: 'Fel vid generering av lektion från lärobok' });
   }
 }
 

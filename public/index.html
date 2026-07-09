@@ -34,6 +34,22 @@
   .genbtn:hover{opacity:.88;}
   .genbtn:disabled{opacity:.5;cursor:default;}
 
+  /* ── Källläge: ämne vs. lärobok ── */
+  .field-group{display:flex;flex-direction:column;gap:6px;}
+  .mode-toggle{display:flex;gap:8px;}
+  .mode-btn{flex:1;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--muted);font-family:'Inter',sans-serif;font-size:13px;font-weight:500;padding:9px 8px;cursor:pointer;transition:all .2s;}
+  .mode-btn:hover{color:var(--text);}
+  .mode-btn.selected{border-color:var(--accent);color:var(--accent);background:rgba(108,143,255,.08);}
+  .material-hint{font-size:12px;color:var(--muted);line-height:1.5;}
+  .material-drop{border:2px dashed var(--border);border-radius:10px;padding:18px;text-align:center;cursor:pointer;transition:border .2s;}
+  .material-drop:hover{border-color:var(--accent);}
+  .material-drop input[type=file]{display:none;}
+  .material-thumbs{display:flex;flex-wrap:wrap;gap:8px;}
+  .material-thumb{position:relative;width:64px;height:64px;border-radius:7px;overflow:hidden;border:1px solid var(--border);}
+  .material-thumb img{width:100%;height:100%;object-fit:cover;display:block;}
+  .material-thumb .rm{position:absolute;top:2px;right:2px;width:18px;height:18px;border-radius:50%;background:rgba(10,12,18,.75);border:none;color:#fff;font-size:11px;line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:center;}
+  .material-thumb .pagenum{position:absolute;bottom:2px;left:3px;font-size:10px;color:#fff;text-shadow:0 1px 2px rgba(0,0,0,.8);}
+
   /* ── LOADING ── */
   #loading{display:none;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;gap:16px;}
   .spinner{width:44px;height:44px;border:3px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin .8s linear infinite;}
@@ -197,8 +213,25 @@
       <option value="Matematik">Matematik</option>
     </select>
 
-    <label>Lektionens ämne</label>
-    <input type="text" id="topic" placeholder="T.ex. Jonbindning — NaCl" value="Jonbindning — jonisk och kovalent bindning"/>
+    <div class="mode-toggle">
+      <button type="button" class="mode-btn selected" id="modeTopicBtn" onclick="setSourceMode('topic')">✍️ Skriv ämne</button>
+      <button type="button" class="mode-btn" id="modeMaterialBtn" onclick="setSourceMode('material')">📷 Från lärobok</button>
+    </div>
+
+    <div id="topicModeFields" class="field-group">
+      <label>Lektionens ämne</label>
+      <input type="text" id="topic" placeholder="T.ex. Jonbindning — NaCl" value="Jonbindning — jonisk och kovalent bindning"/>
+    </div>
+
+    <div id="materialModeFields" class="field-group" style="display:none;">
+      <label>Foton av läroboksidor</label>
+      <div class="material-drop" onclick="document.getElementById('materialFiles').click()">
+        <input type="file" id="materialFiles" accept="image/jpeg,image/png,image/webp" multiple onchange="handleMaterialFiles(this)"/>
+        <div style="font-size:13px;">📷 Klicka för att välja foton</div>
+      </div>
+      <div class="material-thumbs" id="materialThumbs"></div>
+      <div class="material-hint" id="materialHint">Max 8 sidor. Lektionen skapas endast utifrån det som står på bilderna — inget läggs till utanför materialet.</div>
+    </div>
 
     <label>Språk</label>
     <select id="language">
@@ -223,6 +256,7 @@
   <div class="spinner"></div>
   <div style="color:var(--accent);font-weight:600;">Genererar lektion...</div>
   <div class="load-steps">
+    <div class="lstep" id="ls-read" style="display:none;"><div class="lstep-dot"></div><span>Läser läroboksfoton...</span></div>
     <div class="lstep" id="ls-plan"><div class="lstep-dot"></div><span>Skapar lektionsplan...</span></div>
     <div class="lstep" id="ls-content"><div class="lstep-dot"></div><span>Genererar innehåll...</span></div>
     <div class="lstep" id="ls-svg"><div class="lstep-dot"></div><span>Skapar illustrationer...</span></div>
@@ -774,14 +808,72 @@ function setLvl(l) {
   document.getElementById(idFor[l]).classList.add('selected');
 }
 
-const STEP_ORDER = ['plan', 'content', 'svg', 'check', 'done'];
+// ── Källläge: skriv ämne fritt, eller ladda upp foton av läroboksidor ──
+let sourceMode = 'topic';
+let materialImages = []; // { dataUrl, name }
+const MAX_MATERIAL_PAGES = 8;
+const MAX_MATERIAL_FILE_BYTES = 8 * 1024 * 1024;
+
+function setSourceMode(mode) {
+  sourceMode = mode;
+  document.getElementById('modeTopicBtn').classList.toggle('selected', mode === 'topic');
+  document.getElementById('modeMaterialBtn').classList.toggle('selected', mode === 'material');
+  document.getElementById('topicModeFields').style.display = mode === 'topic' ? 'flex' : 'none';
+  document.getElementById('materialModeFields').style.display = mode === 'material' ? 'flex' : 'none';
+  document.getElementById('errBox').style.display = 'none';
+}
+
+function handleMaterialFiles(inputEl) {
+  const files = Array.from(inputEl.files || []);
+  const errBox = document.getElementById('errBox');
+  inputEl.value = '';
+
+  for (const file of files) {
+    if (materialImages.length >= MAX_MATERIAL_PAGES) {
+      errBox.textContent = `Max ${MAX_MATERIAL_PAGES} sidor åt gången`;
+      errBox.style.display = 'block';
+      break;
+    }
+    if (file.size > MAX_MATERIAL_FILE_BYTES) {
+      errBox.textContent = `${file.name} är för stor (max 8 MB per foto)`;
+      errBox.style.display = 'block';
+      continue;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      materialImages.push({ dataUrl: reader.result, name: file.name });
+      renderMaterialThumbs();
+    };
+    reader.readAsDataURL(file);
+  }
+}
+
+function removeMaterialImage(idx) {
+  materialImages.splice(idx, 1);
+  renderMaterialThumbs();
+}
+
+function renderMaterialThumbs() {
+  const box = document.getElementById('materialThumbs');
+  box.innerHTML = materialImages.map((img, i) => `
+    <div class="material-thumb">
+      <img src="${img.dataUrl}" alt="Sida ${i + 1}"/>
+      <span class="pagenum">${i + 1}</span>
+      <button type="button" class="rm" onclick="removeMaterialImage(${i})">✕</button>
+    </div>
+  `).join('');
+}
+
+const STEP_ORDER = ['read', 'plan', 'content', 'svg', 'check', 'done'];
 const STEP_DEFAULT_TEXT = {
+  read: 'Läser läroboksfoton...',
   plan: 'Skapar lektionsplan...',
   content: 'Genererar innehåll...',
   svg: 'Skapar illustrationer...',
   check: 'Granskar fakta...'
 };
 const STEP_DONE_TEXT = {
+  read: '✅ Text inläst',
   plan: '✅ Lektionsplan klar',
   content: '✅ Innehåll genererat',
   svg: '✅ Illustrationer klara',
@@ -790,23 +882,39 @@ const STEP_DONE_TEXT = {
 let statusPollTimer = null;
 
 function resetLoadingSteps() {
-  ['plan', 'content', 'svg', 'check'].forEach(s => {
+  document.getElementById('ls-read').style.display = sourceMode === 'material' ? 'flex' : 'none';
+  ['read', 'plan', 'content', 'svg', 'check'].forEach(s => {
     const el = document.getElementById(`ls-${s}`);
     if (el) { el.className = 'lstep'; el.querySelector('span').textContent = STEP_DEFAULT_TEXT[s]; }
   });
+  document.getElementById('ls-read').style.display = sourceMode === 'material' ? 'flex' : 'none';
   const errBox = document.getElementById('loadErrBox');
   errBox.style.display = 'none';
   errBox.textContent = '';
 }
 
 async function generateLesson() {
-  const topic = document.getElementById('topic').value.trim();
   const subject = document.getElementById('subject').value.trim();
   const language = document.getElementById('language').value;
   const errBox = document.getElementById('errBox');
 
   if (!subject) { errBox.textContent = 'Skriv in ett ämne'; errBox.style.display='block'; return; }
-  if (!topic) { errBox.textContent = 'Skriv in ett lektionsämne'; errBox.style.display='block'; return; }
+
+  let endpoint, body;
+  if (sourceMode === 'material') {
+    if (materialImages.length === 0) {
+      errBox.textContent = 'Ladda upp minst ett foto av en läroboksida';
+      errBox.style.display = 'block';
+      return;
+    }
+    endpoint = '/api/lesson/generate-from-material';
+    body = { images: materialImages.map(m => m.dataUrl), subject, level: lvl, language, duration: 60 };
+  } else {
+    const topic = document.getElementById('topic').value.trim();
+    if (!topic) { errBox.textContent = 'Skriv in ett lektionsämne'; errBox.style.display='block'; return; }
+    endpoint = '/api/lesson/generate';
+    body = { topic, subject, level: lvl, language, duration: 60 };
+  }
   errBox.style.display = 'none';
 
   document.getElementById('setup').style.display = 'none';
@@ -814,10 +922,10 @@ async function generateLesson() {
   resetLoadingSteps();
 
   try {
-    const res = await fetch('/api/lesson/generate', {
+    const res = await fetch(endpoint, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ topic, subject, level: lvl, language, duration: 60 })
+      body: JSON.stringify(body)
     });
 
     const data = await res.json();
@@ -876,7 +984,7 @@ async function checkLessonStatus() {
 
 function updateLoadingSteps(data) {
   const curIdx = STEP_ORDER.indexOf(data.step);
-  ['plan', 'content', 'svg', 'check'].forEach(s => {
+  ['read', 'plan', 'content', 'svg', 'check'].forEach(s => {
     const stepIdx = STEP_ORDER.indexOf(s);
     const el = document.getElementById(`ls-${s}`);
     if (!el) return;
@@ -903,7 +1011,8 @@ function renderEditor() {
   const lvlMap = { weak:'🟢 Grundläggande', mid:'🔵 Medel', strong:'🟣 Avancerad' };
   document.getElementById('edTitle').textContent = lesson.title;
   document.getElementById('edMeta').textContent =
-    `${lesson.subject} · ${lvlMap[lesson.level]} · ${lesson.duration} min · ${lesson.blocks.length} block`;
+    `${lesson.subject} · ${lvlMap[lesson.level]} · ${lesson.duration} min · ${lesson.blocks.length} block` +
+    (lesson.source === 'material' ? ' · 📷 Från lärobok' : '');
 
   // Check bar
   const cb = document.getElementById('checkBar');
@@ -1283,6 +1392,8 @@ function backToSetup() {
   document.getElementById('editor').style.display = 'none';
   document.getElementById('setup').style.display = 'flex';
   lesson = null; lessonId = null;
+  materialImages = [];
+  renderMaterialThumbs();
 }
 </script>
 </body>

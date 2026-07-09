@@ -22,6 +22,23 @@ const topicStrictnessRule = (topic) => `Write content ONLY about ${topic}.
 Do not include related topics, prerequisites or extensions.
 Stay strictly on the exact topic specified.`;
 
+const materialStrictnessRule = () => `Use ONLY facts, explanations and examples that literally appear in the MATERIAL block above.
+Do not add outside knowledge, context or examples not present in that material — if it doesn't cover something, leave it out rather than filling the gap yourself.`;
+
+/**
+ * Källinstruktion för ett block: material-läget ("Skapa från lärobok") är
+ * strängare än det vanliga ämnes-läget och skickar med det transkriberade
+ * källmaterialet i varje prompt. lessonContext.material sätts av
+ * planLessonFromMaterial (se planner.js).
+ */
+function sourceInstructionsFor(lessonContext) {
+  if (!lessonContext.material) {
+    return { materialBlock: '', strictnessRule: topicStrictnessRule(lessonContext.topic) };
+  }
+  const materialBlock = `\nMATERIAL (verbatim transcription of the teacher's uploaded textbook pages — the ONLY source of content allowed):\n"""\n${lessonContext.material}\n"""\n`;
+  return { materialBlock, strictnessRule: materialStrictnessRule() };
+}
+
 /**
  * Genererar innehåll för ett enskilt lektionsblock. Fungerar likadant oavsett
  * ämne — prompten tar bara emot ämnet som en variabel, ingen ämnesspecifik logik.
@@ -29,6 +46,7 @@ Stay strictly on the exact topic specified.`;
 async function writeBlock({ block, lessonContext, level, language }) {
   const lvlInstr = levelMap[level] || levelMap.mid;
   const langInstr = languageInstructionsFor(level);
+  const { materialBlock, strictnessRule } = sourceInstructionsFor(lessonContext);
 
   let prompt = '';
 
@@ -42,7 +60,7 @@ Level: ${lvlInstr}
 Language: ${language}
 
 ${langInstr}
-
+${materialBlock}
 ${VOICE_STYLE_INSTR}
 
 Return ONLY JSON:
@@ -60,7 +78,7 @@ Rules:
 - First scene is a short "hook", 1 sentence to grab attention (emphasis: false)
 - Exactly one scene is the block's main idea, mark it "emphasis": true
 - The rest are explanation scenes. ${SCENE_LEN_RULE}
-- ${topicStrictnessRule(lessonContext.topic)}`;
+- ${strictnessRule}`;
 
   } else if (block.type === 'task') {
     prompt = `You are a ${lessonContext.subject} teacher. Write a lesson task as narrated scenes.
@@ -72,7 +90,7 @@ Level: ${lvlInstr}
 Language: ${language}
 
 ${langInstr}
-
+${materialBlock}
 ${VOICE_STYLE_INSTR}
 
 Return ONLY JSON:
@@ -87,7 +105,7 @@ Return ONLY JSON:
 Rules:
 - Exactly 2 scenes: (1) explanation, (2) the task itself with "emphasis": true
 - ${SCENE_LEN_RULE}
-- ${topicStrictnessRule(lessonContext.topic)}`;
+- ${strictnessRule}`;
 
   } else if (block.type === 'test') {
     prompt = `You are a ${lessonContext.subject} teacher. Create review questions as narrated scenes — one scene = one question.
@@ -96,7 +114,7 @@ Level: ${lvlInstr}
 Language: ${language}
 
 ${langInstr}
-
+${materialBlock}
 ${VOICE_STYLE_INSTR}
 
 Return ONLY JSON:
@@ -109,7 +127,7 @@ Return ONLY JSON:
 Rules:
 - 3-5 scenes, one scene = one question
 - Each voice_text must start with the question number, e.g. "1. ..."
-- ${topicStrictnessRule(lessonContext.topic)}`;
+- ${strictnessRule}`;
 
   } else if (block.type === 'video') {
     // Minimalt innehåll för video-block — läraren väljer/klistrar in länken själv

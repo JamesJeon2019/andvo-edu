@@ -12,7 +12,9 @@ const PORT = process.env.PORT || 3000;
 
 // ── Middleware ──────────────────────────────────────
 app.use(cors());
-app.use(express.json());
+// Höjd gräns — "Skapa från lärobok" skickar foton av läroboksidor som
+// base64 i JSON-body, vilket annars slår i express default på 100kb.
+app.use(express.json({ limit: '15mb' }));
 app.use(express.static(path.join(__dirname, '../public')));
 
 // Rate limit — skydd mot spam av AI-anrop. /status pollas var 3:e sekund av
