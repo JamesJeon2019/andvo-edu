@@ -3,13 +3,12 @@ const Anthropic = require('@anthropic-ai/sdk');
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
 /**
- * CHECKER — fact-checks the finished lesson (facts, formulas, terminology,
- * dates, etc). Subject-agnostic: the checklist is generic on purpose so it
- * works the same way for chemistry, history, geography, art, music, sports...
+ * Slår ihop ett blocks synliga textinnehåll (titel, scenernas voice_text,
+ * ev. hint) till en enda sträng per block, och blocken till en text för
+ * hela lektionen. Används av både checkLesson och checkMaterialFaithfulness.
  */
-async function checkLesson({ lesson, subject }) {
-
-  const allText = lesson.blocks
+function lessonBlocksToText(lesson) {
+  return lesson.blocks
     .filter(b => b.content)
     .map(b => {
       const c = b.content;
@@ -19,6 +18,16 @@ async function checkLesson({ lesson, subject }) {
       return parts.join(' ');
     })
     .join('\n\n');
+}
+
+/**
+ * CHECKER — fact-checks the finished lesson (facts, formulas, terminology,
+ * dates, etc). Subject-agnostic: the checklist is generic on purpose so it
+ * works the same way for chemistry, history, geography, art, music, sports...
+ */
+async function checkLesson({ lesson, subject }) {
+
+  const allText = lessonBlocksToText(lesson);
 
   const prompt = `You are a strict subject-matter expert in "${subject}", fact-checking a science lesson for Swedish year 7-9 students. Accuracy matters more than leniency — a wrong formula, law, or definition taught to students is a real harm, so flag anything you are not fully confident is correct.
 
@@ -64,4 +73,66 @@ If there are no errors, return status: "ok" and an empty issues array.`;
   }
 }
 
-module.exports = { checkLesson };
+/**
+ * KÄLLTROHETSKONTROLL — för "Skapa från lärobok"-läget. Till skillnad från
+ * checkLesson (som bedömer om lektionen är sakligt KORREKT) kontrollerar
+ * denna om lektionen är TROGEN källmaterialet: har writer-agenten lagt till
+ * fakta, siffror, termer, exempel eller påståenden som inte finns i det
+ * uppladdade läroboksmaterialet, även om de råkar vara sanna?
+ */
+async function checkMaterialFaithfulness({ lesson, material }) {
+
+  const allText = lessonBlocksToText(lesson);
+
+  const prompt = `You are auditing a generated lesson for source faithfulness against the textbook material it was supposed to be built from ONLY.
+
+Your job is NOT to judge whether the lesson is factually correct — it is to compare the lesson against the material below, block by block, line by line, and find every fact, number, term, example or claim in the lesson that is NOT present in the material. It does not matter if the added content is true or reasonable — if it isn't in the material, it should be flagged, because the lesson was supposed to be built strictly from this source.
+
+SOURCE MATERIAL (the only content the lesson is allowed to be built from):
+"""
+${material}
+"""
+
+GENERATED LESSON (compare this against the material above):
+${allText}
+
+Method — do this systematically, not impressionistically:
+1. Go through the lesson block by block (use the block's title as its location).
+2. For each block, go through it sentence by sentence.
+3. For each fact, number, term, example, name or claim in that sentence, check whether it literally appears in the material (paraphrasing the material's own content is fine — introducing anything beyond it is not).
+4. If something in the lesson has no basis in the material, record it as an issue with the block it came from.
+
+Return ONLY JSON:
+{
+  "status": "ok" | "warnings" | "errors",
+  "issues": [
+    {
+      "type": "error" | "warning",
+      "location": "the block title (and roughly where in it) where this was found",
+      "found": "the fact, number, term, example or claim that was added",
+      "note": "why this isn't in the material, or how it differs from what the material actually says"
+    }
+  ],
+  "summary": "one-sentence summary of the check"
+}
+
+Use "error" for added facts/numbers/claims that could mislead the teacher into thinking they came from the textbook, and "warning" for minor additions (e.g. a connecting example or explanatory phrasing) that don't change any facts but still go beyond the material. If everything in the lesson traces back to the material, return status: "ok" and an empty issues array.`;
+
+  try {
+    const response = await client.messages.create({
+      model: 'claude-sonnet-4-6',
+      max_tokens: 1500,
+      messages: [{ role: 'user', content: prompt }]
+    });
+
+    const text = response.content[0].text.trim();
+    const clean = text.replace(/```json|```/g, '').trim();
+    return JSON.parse(clean);
+  } catch (e) {
+    // Checker misslyckanden ska aldrig blockera lektionen från att visas
+    console.warn('Faithfulness checker warning:', e.message);
+    return { status: 'ok', issues: [], summary: 'Källtrohetskontroll hoppades över' };
+  }
+}
+
+module.exports = { checkLesson, checkMaterialFaithfulness };

@@ -4,7 +4,7 @@ const { v4: uuidv4 } = require('uuid');
 const { planLesson, planLessonFromMaterial } = require('../agents/planner');
 const { extractTextbookMaterial } = require('../agents/textbookReader');
 const { writeLesson, writeBlock, illustrateLesson, illustrateBlockScenes, countIllustrableScenes } = require('../agents/writer');
-const { checkLesson } = require('../agents/checker');
+const { checkLesson, checkMaterialFaithfulness } = require('../agents/checker');
 const { generateSVG } = require('../agents/illustrator');
 const { searchYoutubeVideos, getCaptionTracks } = require('../agents/youtubeSearch');
 
@@ -192,11 +192,17 @@ async function runGenerationFromMaterial(lessonId, { material, subject, level, d
     const checkResult = await checkLesson({ lesson: written, subject });
     console.log(`  ✅ Kontroll: ${checkResult.status} — ${checkResult.summary}`);
 
+    // ── Steg 5: Källtrohetskontroll (endast lärobok-läget) ──
+    console.log('  📐 Kontrollerar källtrohet mot materialet...');
+    const faithfulnessResult = await checkMaterialFaithfulness({ lesson: written, material });
+    console.log(`  ✅ Källtrohet: ${faithfulnessResult.status} — ${faithfulnessResult.summary}`);
+
     // ── Sätter ihop den färdiga lektionen ────────────────────
     const finalLesson = {
       id: lessonId,
       ...written,
       check: checkResult,
+      faithfulnessCheck: faithfulnessResult,
       source: 'material',
       createdAt: new Date().toISOString()
     };
