@@ -14,7 +14,10 @@ const PORT = process.env.PORT || 3000;
 app.use(cors());
 // Höjd gräns — "Skapa från lärobok" skickar foton av läroboksidor som
 // base64 i JSON-body, vilket annars slår i express default på 100kb.
-app.use(express.json({ limit: '15mb' }));
+// Fotona skalas ner på klienten innan uppladdning (se materialImages i
+// public/index.html), så 20mb är extra marginal snarare än det som
+// normalt förväntas användas.
+app.use(express.json({ limit: '20mb' }));
 app.use(express.static(path.join(__dirname, '../public')));
 
 // Rate limit — skydd mot spam av AI-anrop. /status pollas var 3:e sekund av
@@ -39,6 +42,21 @@ app.get('/', (req, res) => {
 // Health check för Render
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', version: '1.0.0', service: 'andvo-edu' });
+});
+
+// ── Felhantering för body-parsern ───────────────────
+// express.json() svarar annars med en HTML-felsida när body:n är för stor
+// eller inte går att tolka som JSON, vilket får frontendens res.json() att
+// krascha på "Unexpected token '<'". Svarar med JSON istället, så
+// frontend alltid kan lita på att svaret är parsbart.
+app.use((err, req, res, next) => {
+  if (err.type === 'entity.too.large') {
+    return res.status(413).json({ error: 'Bilderna är för stora, försök med färre eller mindre bilder' });
+  }
+  if (err.type === 'entity.parse.failed' || err instanceof SyntaxError) {
+    return res.status(400).json({ error: 'Ogiltig förfrågan, försök igen' });
+  }
+  next(err);
 });
 
 // ── Start ───────────────────────────────────────────

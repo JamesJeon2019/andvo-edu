@@ -848,7 +848,39 @@ function setSourceMode(mode) {
   document.getElementById('errBox').style.display = 'none';
 }
 
-function handleMaterialFiles(inputEl) {
+// Fotona från en telefonkamera är ofta 3000-4000px+ breda, vilket gör
+// base64-payloaden onödigt stor (och kan slå i serverns gräns när flera
+// sidor laddas upp samtidigt). Skalar ner till max ~1600px på långsidan
+// och sparar som JPEG — mer än tillräckligt för att Vision ska kunna
+// läsa texten, se Anthropics rekommendationer för bildupplösning.
+const MATERIAL_MAX_DIMENSION = 1600;
+const MATERIAL_JPEG_QUALITY = 0.85;
+
+function downscaleImageFile(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const img = new Image();
+      img.onload = () => {
+        const scale = Math.min(1, MATERIAL_MAX_DIMENSION / Math.max(img.width, img.height));
+        const width = Math.round(img.width * scale);
+        const height = Math.round(img.height * scale);
+
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        canvas.getContext('2d').drawImage(img, 0, 0, width, height);
+        resolve(canvas.toDataURL('image/jpeg', MATERIAL_JPEG_QUALITY));
+      };
+      img.onerror = () => reject(new Error('Kunde inte läsa bilden'));
+      img.src = reader.result;
+    };
+    reader.onerror = () => reject(new Error('Kunde inte läsa filen'));
+    reader.readAsDataURL(file);
+  });
+}
+
+async function handleMaterialFiles(inputEl) {
   const files = Array.from(inputEl.files || []);
   const errBox = document.getElementById('errBox');
   inputEl.value = '';
@@ -864,12 +896,14 @@ function handleMaterialFiles(inputEl) {
       errBox.style.display = 'block';
       continue;
     }
-    const reader = new FileReader();
-    reader.onload = () => {
-      materialImages.push({ dataUrl: reader.result, name: file.name });
+    try {
+      const dataUrl = await downscaleImageFile(file);
+      materialImages.push({ dataUrl, name: file.name });
       renderMaterialThumbs();
-    };
-    reader.readAsDataURL(file);
+    } catch (e) {
+      errBox.textContent = `Kunde inte läsa ${file.name}, försök igen`;
+      errBox.style.display = 'block';
+    }
   }
 }
 
