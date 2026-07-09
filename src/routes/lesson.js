@@ -15,7 +15,6 @@ const lessons = new Map();
 const progress = new Map();
 
 const STATUS_MESSAGES = {
-  read: 'Läser läroboksfoton...',
   plan: 'Skapar lektionsplan...',
   content: 'Genererar innehåll...',
   check: 'Granskar fakta...',
@@ -105,18 +104,17 @@ async function runGeneration(lessonId, { topic, subject, level, duration, langua
 }
 
 /**
- * POST /api/lesson/generate-from-material
- * "Skapa från lärobok" — läraren laddar upp foton av läroboksidor (base64
- * data-URL:er). Claude Vision läser av texten och hela lektionen genereras
- * sedan strikt utifrån den — inget läggs till utanför det uppladdade
- * materialet. Svarar direkt med ett lessonId, precis som /generate.
+ * POST /api/lesson/extract-material
+ * Läser av lärarens uppladdade läroboksfoton med Claude Vision och
+ * returnerar den transkriberade texten direkt i svaret. Ett enda
+ * Vision-anrop är snabbt nog för att köras synkront utan progress-polling.
+ * Läraren får läsa igenom och rätta texten (formler, kemiska index och
+ * diagram kan bli fel) innan hela lektionen genereras via
+ * /generate-from-material.
  */
-router.post('/generate-from-material', (req, res) => {
-  const { images, subject, level, duration, language } = req.body;
+router.post('/extract-material', async (req, res) => {
+  const { images, language } = req.body;
 
-  if (!subject || !level) {
-    return res.status(400).json({ error: 'subject och level krävs' });
-  }
   if (!Array.isArray(images) || images.length === 0) {
     return res.status(400).json({ error: 'Minst ett foto av en läroboksida krävs' });
   }
@@ -124,13 +122,39 @@ router.post('/generate-from-material', (req, res) => {
     return res.status(400).json({ error: `Max ${MAX_MATERIAL_PAGES} sidor åt gången` });
   }
 
+  try {
+    const { title, text } = await extractTextbookMaterial(images, language || 'sv');
+    res.json({ success: true, title, text });
+  } catch (error) {
+    console.error('❌ Fel vid läsning av läroboksfoton:', error.message);
+    res.status(500).json({ error: 'Kunde inte läsa av läroboksfotona, försök igen' });
+  }
+});
+
+/**
+ * POST /api/lesson/generate-from-material
+ * "Skapa från lärobok" — läraren har redan fått materialet avläst (och ev.
+ * rättat) via /extract-material. Tar emot den färdiga texten direkt, utan
+ * något nytt Vision-anrop, och genererar hela lektionen strikt utifrån
+ * den. Svarar direkt med ett lessonId, precis som /generate.
+ */
+router.post('/generate-from-material', (req, res) => {
+  const { material, subject, level, duration, language } = req.body;
+
+  if (!subject || !level) {
+    return res.status(400).json({ error: 'subject och level krävs' });
+  }
+  if (!material || !material.text || !material.text.trim()) {
+    return res.status(400).json({ error: 'Inläst material krävs' });
+  }
+
   const lessonId = uuidv4();
-  setProgress(lessonId, { step: 'read', svg_done: 0, svg_total: 0, error: null });
+  setProgress(lessonId, { step: 'plan', svg_done: 0, svg_total: 0, error: null });
 
   res.json({ success: true, lessonId });
 
   runGenerationFromMaterial(lessonId, {
-    images,
+    material: material.text,
     subject,
     level,
     duration: duration || 60,
@@ -138,17 +162,11 @@ router.post('/generate-from-material', (req, res) => {
   });
 });
 
-async function runGenerationFromMaterial(lessonId, { images, subject, level, duration, language }) {
+async function runGenerationFromMaterial(lessonId, { material, subject, level, duration, language }) {
   console.log(`\n📖 Genererar lektion från lärobok | ${subject} | ${level}`);
 
   try {
-    // ── Steg 0: Läs läroboksfoton (Claude Vision) ────
-    console.log('  👁  Läser läroboksfoton...');
-    const { text: material } = await extractTextbookMaterial(images, language);
-    console.log(`  ✅ Text inläst (${material.length} tecken)`);
-
     // ── Steg 1: Planner (endast från materialet) ────
-    setProgress(lessonId, { step: 'plan' });
     console.log('  🗓  Planner: skapar plan från material...');
     const plan = await planLessonFromMaterial({ material, subject, level, duration, language });
     console.log(`  ✅ Plan klar: ${plan.blocks.length} block`);

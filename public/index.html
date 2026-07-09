@@ -256,13 +256,38 @@
   <div class="spinner"></div>
   <div style="color:var(--accent);font-weight:600;">Genererar lektion...</div>
   <div class="load-steps">
-    <div class="lstep" id="ls-read" style="display:none;"><div class="lstep-dot"></div><span>Läser läroboksfoton...</span></div>
     <div class="lstep" id="ls-plan"><div class="lstep-dot"></div><span>Skapar lektionsplan...</span></div>
     <div class="lstep" id="ls-content"><div class="lstep-dot"></div><span>Genererar innehåll...</span></div>
     <div class="lstep" id="ls-svg"><div class="lstep-dot"></div><span>Skapar illustrationer...</span></div>
     <div class="lstep" id="ls-check"><div class="lstep-dot"></div><span>Granskar fakta...</span></div>
   </div>
   <div class="error-box" id="loadErrBox"></div>
+</div>
+
+<!-- MATERIAL: läser av foton -->
+<div id="materialReading" style="display:none;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;gap:16px;">
+  <div class="spinner"></div>
+  <div style="color:var(--accent);font-weight:600;">Läser text från fotona...</div>
+</div>
+
+<!-- MATERIAL: bekräfta/rätta inläst text -->
+<div id="materialConfirm" style="display:none;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;padding:24px;gap:16px;">
+  <div class="logo">Andvo <span>Edu</span></div>
+  <div class="tagline">Kontrollera den inlästa texten innan lektionen skapas</div>
+  <div class="card">
+    <div class="field-group">
+      <label>Titel</label>
+      <input type="text" id="materialTitle"/>
+    </div>
+    <div class="field-group">
+      <label>Inläst text</label>
+      <textarea id="materialText" class="tinput" style="min-height:260px;"></textarea>
+      <div class="material-hint">Rätta eventuella feltolkningar (t.ex. formler, kemiska index eller diagram) innan lektionen genereras.</div>
+    </div>
+    <div class="error-box" id="materialConfirmErrBox"></div>
+    <button class="hbtn" style="width:100%;padding:11px;font-size:14px;" onclick="backToMaterialUpload()">← Tillbaka</button>
+    <button class="genbtn" onclick="confirmMaterialAndGenerate()">Skapa lektion från detta →</button>
+  </div>
 </div>
 
 <!-- EDITOR -->
@@ -864,16 +889,14 @@ function renderMaterialThumbs() {
   `).join('');
 }
 
-const STEP_ORDER = ['read', 'plan', 'content', 'svg', 'check', 'done'];
+const STEP_ORDER = ['plan', 'content', 'svg', 'check', 'done'];
 const STEP_DEFAULT_TEXT = {
-  read: 'Läser läroboksfoton...',
   plan: 'Skapar lektionsplan...',
   content: 'Genererar innehåll...',
   svg: 'Skapar illustrationer...',
   check: 'Granskar fakta...'
 };
 const STEP_DONE_TEXT = {
-  read: '✅ Text inläst',
   plan: '✅ Lektionsplan klar',
   content: '✅ Innehåll genererat',
   svg: '✅ Illustrationer klara',
@@ -882,12 +905,10 @@ const STEP_DONE_TEXT = {
 let statusPollTimer = null;
 
 function resetLoadingSteps() {
-  document.getElementById('ls-read').style.display = sourceMode === 'material' ? 'flex' : 'none';
-  ['read', 'plan', 'content', 'svg', 'check'].forEach(s => {
+  ['plan', 'content', 'svg', 'check'].forEach(s => {
     const el = document.getElementById(`ls-${s}`);
     if (el) { el.className = 'lstep'; el.querySelector('span').textContent = STEP_DEFAULT_TEXT[s]; }
   });
-  document.getElementById('ls-read').style.display = sourceMode === 'material' ? 'flex' : 'none';
   const errBox = document.getElementById('loadErrBox');
   errBox.style.display = 'none';
   errBox.textContent = '';
@@ -900,24 +921,91 @@ async function generateLesson() {
 
   if (!subject) { errBox.textContent = 'Skriv in ett ämne'; errBox.style.display='block'; return; }
 
-  let endpoint, body;
   if (sourceMode === 'material') {
     if (materialImages.length === 0) {
       errBox.textContent = 'Ladda upp minst ett foto av en läroboksida';
       errBox.style.display = 'block';
       return;
     }
-    endpoint = '/api/lesson/generate-from-material';
-    body = { images: materialImages.map(m => m.dataUrl), subject, level: lvl, language, duration: 60 };
-  } else {
-    const topic = document.getElementById('topic').value.trim();
-    if (!topic) { errBox.textContent = 'Skriv in ett lektionsämne'; errBox.style.display='block'; return; }
-    endpoint = '/api/lesson/generate';
-    body = { topic, subject, level: lvl, language, duration: 60 };
+    errBox.style.display = 'none';
+    startMaterialExtraction(language);
+    return;
+  }
+
+  const topic = document.getElementById('topic').value.trim();
+  if (!topic) { errBox.textContent = 'Skriv in ett lektionsämne'; errBox.style.display='block'; return; }
+  errBox.style.display = 'none';
+
+  startGeneration('/api/lesson/generate', { topic, subject, level: lvl, language, duration: 60 }, 'setup', 'errBox');
+}
+
+/**
+ * "Från lärobok": läser av de uppladdade fotona med Vision innan
+ * lektionen genereras, så läraren kan se och rätta texten (formler,
+ * kemiska index och diagram kan bli feltolkade) — se materialConfirm-skärmen.
+ */
+async function startMaterialExtraction(language) {
+  document.getElementById('setup').style.display = 'none';
+  document.getElementById('materialReading').style.display = 'flex';
+
+  try {
+    const res = await fetch('/api/lesson/extract-material', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ images: materialImages.map(m => m.dataUrl), language })
+    });
+    const data = await res.json();
+    if (!data.success) throw new Error(data.error || 'Okänt fel');
+
+    document.getElementById('materialTitle').value = data.title || '';
+    document.getElementById('materialText').value = data.text || '';
+    const confirmErrBox = document.getElementById('materialConfirmErrBox');
+    confirmErrBox.style.display = 'none';
+    confirmErrBox.textContent = '';
+
+    document.getElementById('materialReading').style.display = 'none';
+    document.getElementById('materialConfirm').style.display = 'flex';
+
+  } catch (e) {
+    document.getElementById('materialReading').style.display = 'none';
+    document.getElementById('setup').style.display = 'flex';
+    const errBox = document.getElementById('errBox');
+    errBox.textContent = 'Fel: ' + e.message;
+    errBox.style.display = 'block';
+  }
+}
+
+function backToMaterialUpload() {
+  document.getElementById('materialConfirm').style.display = 'none';
+  document.getElementById('setup').style.display = 'flex';
+}
+
+function confirmMaterialAndGenerate() {
+  const title = document.getElementById('materialTitle').value.trim();
+  const text = document.getElementById('materialText').value.trim();
+  const errBox = document.getElementById('materialConfirmErrBox');
+
+  if (!text) {
+    errBox.textContent = 'Texten får inte vara tom';
+    errBox.style.display = 'block';
+    return;
   }
   errBox.style.display = 'none';
 
-  document.getElementById('setup').style.display = 'none';
+  const subject = document.getElementById('subject').value.trim();
+  const language = document.getElementById('language').value;
+
+  startGeneration('/api/lesson/generate-from-material', {
+    material: { title, text },
+    subject,
+    level: lvl,
+    language,
+    duration: 60
+  }, 'materialConfirm', 'materialConfirmErrBox');
+}
+
+async function startGeneration(endpoint, body, originScreenId, errBoxId) {
+  document.getElementById(originScreenId).style.display = 'none';
   document.getElementById('loading').style.display = 'flex';
   resetLoadingSteps();
 
@@ -936,7 +1024,8 @@ async function generateLesson() {
 
   } catch (e) {
     document.getElementById('loading').style.display = 'none';
-    document.getElementById('setup').style.display = 'flex';
+    document.getElementById(originScreenId).style.display = 'flex';
+    const errBox = document.getElementById(errBoxId);
     errBox.textContent = 'Fel: ' + e.message;
     errBox.style.display = 'block';
   }
@@ -984,7 +1073,7 @@ async function checkLessonStatus() {
 
 function updateLoadingSteps(data) {
   const curIdx = STEP_ORDER.indexOf(data.step);
-  ['read', 'plan', 'content', 'svg', 'check'].forEach(s => {
+  ['plan', 'content', 'svg', 'check'].forEach(s => {
     const stepIdx = STEP_ORDER.indexOf(s);
     const el = document.getElementById(`ls-${s}`);
     if (!el) return;
@@ -1394,6 +1483,8 @@ function backToSetup() {
   lesson = null; lessonId = null;
   materialImages = [];
   renderMaterialThumbs();
+  document.getElementById('materialTitle').value = '';
+  document.getElementById('materialText').value = '';
 }
 </script>
 </body>
