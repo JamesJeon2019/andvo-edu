@@ -12,6 +12,34 @@ function parseDataUrl(dataUrl) {
 }
 
 /**
+ * Försöker tolka modellens svar som JSON även när Claude, trots
+ * instruktionen att bara svara med JSON, ändå skriver en inledande eller
+ * avslutande mening runt objektet (t.ex. "Here is the transcription: {...}").
+ * Provar först hela svaret (efter att ev. markdown-kodblock tagits bort),
+ * och faller sedan tillbaka på att klippa ut allt mellan den första '{'
+ * och den sista '}'.
+ *
+ * TODO: samma JSON.parse(clean)-mönster finns i planner.js, writer.js och
+ * checker.js och kan drabbas av samma problem — att göra dem lika robusta
+ * är en separat, bredare uppgift.
+ */
+function tryParseJson(rawText) {
+  const stripped = rawText.replace(/```json|```/g, '').trim();
+  try {
+    return JSON.parse(stripped);
+  } catch (e) {
+    const start = stripped.indexOf('{');
+    const end = stripped.lastIndexOf('}');
+    if (start === -1 || end === -1 || end <= start) return null;
+    try {
+      return JSON.parse(stripped.slice(start, end + 1));
+    } catch (e2) {
+      return null;
+    }
+  }
+}
+
+/**
  * LÄROBOKSLÄSARE — läser av foton av läroboksidor med Claude Vision och
  * transkriberar innehållet ordagrant, utan att lägga till eller sammanfatta
  * något. Resultatet används som det enda tillåtna källmaterialet av
@@ -44,7 +72,9 @@ Return ONLY JSON, no markdown:
 {
   "title": "a short title for this material, taken from its heading if there is one, otherwise inferred strictly from the visible content",
   "text": "the full transcribed text of all pages, in reading order"
-}`
+}
+
+Do not include any text before or after the JSON object. Do not write introductory phrases like "Here is...". Your entire reply must be valid JSON, starting with { and ending with }.`
     }
   ];
 
@@ -54,9 +84,24 @@ Return ONLY JSON, no markdown:
     messages: [{ role: 'user', content }]
   });
 
-  const raw = response.content[0].text.trim();
-  const clean = raw.replace(/```json|```/g, '').trim();
-  const result = JSON.parse(clean);
+  let result = tryParseJson(response.content[0].text.trim());
+
+  if (!result) {
+    // Modellen svarade ändå med text runt JSON-objektet — ett enda
+    // återförsök med en skarpare instruktion, innan vi ger upp.
+    console.warn('Läroboksläsare: ogiltigt JSON-svar, gör ett återförsök med striktare instruktion');
+    const retryResponse = await client.messages.create({
+      model: 'claude-sonnet-4-6',
+      max_tokens: 4000,
+      system: 'Your previous reply included text outside the JSON object. Reply with ONLY the JSON object, no preamble, no explanation, starting with { and ending with }.',
+      messages: [{ role: 'user', content }]
+    });
+    result = tryParseJson(retryResponse.content[0].text.trim());
+  }
+
+  if (!result) {
+    throw new Error('Kunde inte tolka svaret från Vision som JSON');
+  }
 
   if (!result.text || !result.text.trim()) {
     throw new Error('Kunde inte läsa någon text från bilderna');
