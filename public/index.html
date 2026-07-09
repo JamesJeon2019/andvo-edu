@@ -604,6 +604,24 @@ function submitInstruction(idx, si) {
   callRegenerateSvg(idx, si, instruction);
 }
 
+/**
+ * Sparar scenens egen bild (uppladdad fil eller länk) på servern så att
+ * den inte försvinner vid omladdning. Fire-and-forget — det lokala
+ * sceneData-tillståndet har redan uppdaterats och renderats, så UI:t
+ * väntar inte på svaret. Fel loggas bara till konsolen.
+ */
+function saveSceneImage(idx, si) {
+  const sc = sceneData[idx][si];
+  const block = lesson.blocks[idx];
+  fetch(`/api/lesson/${lessonId}/block/${block.id}/scene/${si}/image`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ custom_image: sc.custom_image, custom_image_url: sc.custom_image_url })
+  }).then(res => {
+    if (!res.ok) console.error('Kunde inte spara scenens bild på servern');
+  }).catch(e => console.error('Kunde inte spara scenens bild på servern:', e.message));
+}
+
 function handleFileUpload(idx, si, inputEl) {
   const file = inputEl.files && inputEl.files[0];
   if (!file) return;
@@ -620,6 +638,7 @@ function handleFileUpload(idx, si, inputEl) {
     sc.custom_image_url = null;
     clearSceneError(idx, si);
     refreshSceneVisual(idx, si);
+    saveSceneImage(idx, si);
   };
   reader.readAsDataURL(file);
   inputEl.value = '';
@@ -643,6 +662,7 @@ async function submitImageUrl(idx, si) {
     sc.custom_image_url = url;
     sc.custom_image = null;
     refreshSceneVisual(idx, si);
+    saveSceneImage(idx, si);
   } catch (e) {
     showSceneError(idx, si, 'Länken verkar inte vara en bild, försök igen');
   }
@@ -654,6 +674,7 @@ function revertToSvg(idx, si) {
   sc.custom_image_url = null;
   clearSceneError(idx, si);
   refreshSceneVisual(idx, si);
+  saveSceneImage(idx, si);
 }
 
 function currentVoiceAndRate(idx) {

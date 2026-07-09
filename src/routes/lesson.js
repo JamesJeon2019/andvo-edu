@@ -315,6 +315,34 @@ router.post('/:id/block/:blockId/regenerate-svg', async (req, res) => {
 });
 
 /**
+ * PUT /api/lesson/:id/block/:blockId/scene/:sceneIndex/image
+ * Sparar lärarens egen bild för en scen (uppladdad fil eller inklistrad
+ * länk) så att den inte försvinner vid omladdning. custom_image och
+ * custom_image_url är ömsesidigt uteslutande — sätts den ena nollställs
+ * den andra. Body: { custom_image: string|null, custom_image_url: string|null }
+ */
+router.put('/:id/block/:blockId/scene/:sceneIndex/image', (req, res) => {
+  const lesson = lessons.get(req.params.id);
+  if (!lesson) return res.status(404).json({ error: 'Lektionen hittades inte' });
+
+  const blockId = parseInt(req.params.blockId);
+  const block = lesson.blocks.find(b => b.id === blockId);
+  if (!block) return res.status(404).json({ error: 'Blocket hittades inte' });
+
+  const sceneIndex = parseInt(req.params.sceneIndex);
+  const scenes = block.content && block.content.scenes;
+  const scene = Array.isArray(scenes) ? scenes[sceneIndex] : null;
+  if (!scene) return res.status(404).json({ error: 'Scenen hittades inte' });
+
+  const { custom_image, custom_image_url } = req.body;
+  scene.custom_image = custom_image || null;
+  scene.custom_image_url = scene.custom_image ? null : (custom_image_url || null);
+  lessons.set(lesson.id, lesson);
+
+  res.json({ success: true });
+});
+
+/**
  * PUT /api/lesson/:id/blocks/reorder
  * Ändra ordningen på blocken
  */
