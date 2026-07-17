@@ -1,17 +1,17 @@
 # Handoff — Andvo Edu
 
-_Last updated: 2026-07-16_
+_Last updated: 2026-07-17_
 
 ## Project status
 
 Andvo Edu is an AI-powered lesson generator for Swedish schools (Node.js +
 Express backend, Claude API for content generation, plain HTML/CSS/JS
 frontend, deployed on Render). `main` is clean and up to date with
-`origin/main` at commit `37d24e1`. No commits or local changes since the
-last handoff update (2026-07-09) — the "What was completed" and "Next
-steps" sections below are unchanged from last week and still reflect the
-current state. Local dev server (`npm run dev`, port 3000) starts cleanly
-and `/health` responds as expected.
+`origin/main` at commit `6cce9b3`. Lesson storage now persists in a real
+Postgres database (Neon) instead of an in-memory Map — see "What was
+completed" below. Local dev server (`npm run dev`, port 3000) starts
+cleanly, runs the DB migration on boot, and `/health` responds as
+expected.
 
 Core flow is functional end-to-end: a lesson request goes through a
 planner agent → writer agent → (optional) SVG illustrator agent, blocks
@@ -106,12 +106,52 @@ and voice playback + YouTube links are supported per block.
   - Verified with a controlled test (monkey-patched the Anthropic SDK to
     reproduce the exact reported failure deterministically) plus a real
     Vision call against the live server.
+- Migrated lesson storage from the in-memory `lessons` Map to a real
+  Postgres database (Neon) (`6cce9b3`):
+  - New `src/db/pool.js` — a single shared `pg.Pool` reading
+    `DATABASE_URL`, SSL configured for Neon's managed cert chain.
+  - New `src/db/schema.sql` — `lessons` table (`id`, `data` JSONB holding
+    the full lesson object as-is, plus `subject`/`level`/`mode`/`title`/
+    `status` broken out for a future list/filter screen, `created_at`/
+    `updated_at`); run automatically as a `CREATE TABLE IF NOT EXISTS`
+    migration at server startup in `src/index.js`.
+  - New `src/db/lessonStore.js` — `getLesson`, `saveLesson` (upsert),
+    `archiveLesson`, `listLessons({ status })`, `deleteLesson`.
+  - `src/routes/lesson.js` rewired: every route handler that used
+    `lessons.get`/`lessons.set` now awaits the store instead; the
+    `lessons` Map is gone entirely.
+  - New endpoint `PUT /api/lesson/:id/archive` — sets `status =
+    'archived'` without deleting the lesson, for teachers to archive
+    approved/finished lessons.
+  - The separate `progress` Map (per-lesson `step`/`svg_done`/
+    `svg_total` for `/status` polling during generation) was
+    deliberately left as in-memory, ephemeral state — it only lives a
+    couple of minutes per generation and doesn't need to survive a
+    restart.
+  - `DATABASE_URL` is confirmed set and working both on Render and
+    locally in `.env` (untracked, gitignored).
+  - Verified against the real Neon database: full CRUD cycle
+    (insert/update/list/archive/delete) via a throwaway test script,
+    then end-to-end through the actual API — generated a lesson, edited
+    a block, fully stopped and restarted the dev server (not just a
+    nodemon reload), and confirmed `GET /api/lesson/:id` still returned
+    the lesson with the edit intact.
 
 ## Next steps
 
-- Use photos of textbook pages themselves as scene illustrations (instead
-  of, or alongside, the AI-generated SVG) — discussed but not yet
-  implemented.
+- Add a "Mina lektioner" screen to the frontend — a list of
+  saved/archived lessons (via the already-built `listLessons`), with the
+  ability to open a previously generated lesson instead of generating it
+  again.
+- Build out a proper render→critique loop for the SVG illustrator: render
+  the generated SVG to PNG server-side (`renderSVGToPNG` in
+  `src/agents/illustrator.js`, using `resvg-js`, already added but not
+  yet wired into the generation flow) → have Vision check the rendered
+  image against what should be depicted → regenerate on mismatch.
+  Architecture discussed, implementation not yet started.
+- Auto-assign photos of textbook pages to lecture-block scenes in
+  "material" mode (instead of, or alongside, the AI-generated SVG) —
+  designed but not yet implemented.
 - Investigate a user report of comprehension/interpretation errors in
   lessons generated via "Från lärobok" (the writer misunderstanding the
   text or a phenomenon it describes). Not yet started — need concrete
@@ -120,9 +160,7 @@ and voice playback + YouTube links are supported per block.
   a lesson can hold both an AI-generated version and a from-textbook
   version of its content side by side (rather than one replacing the
   other), with a way to switch between them per block.
-- Per the README's stated roadmap: add persistence (PostgreSQL) —
-  lessons currently appear to be in-memory/ephemeral — and Google
-  Classroom integration.
+- Per the README's stated roadmap: Google Classroom integration.
 - Only one `TODO` marker in `src/` currently (in
   `src/agents/textbookReader.js`, see above — making `planner.js`/
   `writer.js`/`checker.js` equally robust against non-JSON prose in
