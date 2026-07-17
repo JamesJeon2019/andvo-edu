@@ -1,4 +1,5 @@
 require('dotenv').config();
+require('./utils/logger'); // patchar console.log/warn/error med tidsstämplar
 const express = require('express');
 const cors = require('cors');
 const path = require('path');

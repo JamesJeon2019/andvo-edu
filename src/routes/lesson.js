@@ -8,6 +8,7 @@ const { checkLesson, checkMaterialFaithfulness } = require('../agents/checker');
 const { generateSVG } = require('../agents/illustrator');
 const { searchYoutubeVideos, getCaptionTracks } = require('../agents/youtubeSearch');
 const { getLesson, saveLesson, archiveLesson, listLessons } = require('../db/lessonStore');
+const { scoped } = require('../utils/logger');
 
 // In-memory förloppsindikator per lektions-ID, för /status-polling under generering
 // (avsiktligt kortlivad — rensas aldrig mot databasen, se handoff.md)
@@ -55,34 +56,35 @@ router.post('/generate', (req, res) => {
 });
 
 async function runGeneration(lessonId, { topic, subject, level, duration, language }) {
-  console.log(`\n📚 Genererar lektion: "${topic}" | ${subject} | ${level}`);
+  const log = scoped(lessonId.slice(0, 8));
+  log.log(`\n📚 Genererar lektion: "${topic}" | ${subject} | ${level}`);
 
   try {
     // ── Steg 1: Planner ─────────────────────────────
-    console.log('  🗓  Planner: skapar plan...');
+    log.log('  🗓  Planner: skapar plan...');
     const plan = await planLesson({ topic, subject, level, duration, language });
-    console.log(`  ✅ Plan klar: ${plan.blocks.length} block`);
+    log.log(`  ✅ Plan klar: ${plan.blocks.length} block`);
 
     // ── Steg 2: Writer (text) ───────────────────────
     setProgress(lessonId, { step: 'content' });
-    console.log('  ✍️  Writer: genererar innehåll...');
+    log.log('  ✍️  Writer: genererar innehåll...');
     const written = await writeLesson({ plan, level, language });
-    console.log('  ✅ Innehåll klart');
+    log.log('  ✅ Innehåll klart');
 
     // ── Steg 3: Illustrator (SVG per scen) ──────────
     const svgTotal = countIllustrableScenes(written.blocks);
     setProgress(lessonId, { step: 'svg', svg_done: 0, svg_total: svgTotal });
-    console.log(`  🎨 Illustrator: skapar ${svgTotal} illustrationer...`);
+    log.log(`  🎨 Illustrator: skapar ${svgTotal} illustrationer...`);
     await illustrateLesson(written.blocks, subject, (done, total) => {
       setProgress(lessonId, { step: 'svg', svg_done: done, svg_total: total });
     });
-    console.log('  ✅ Illustrationer klara');
+    log.log('  ✅ Illustrationer klara');
 
     // ── Steg 4: Checker ─────────────────────────────
     setProgress(lessonId, { step: 'check' });
-    console.log('  🔍 Checker: kontrollerar fakta...');
+    log.log('  🔍 Checker: kontrollerar fakta...');
     const checkResult = await checkLesson({ lesson: written, subject });
-    console.log(`  ✅ Kontroll: ${checkResult.status} — ${checkResult.summary}`);
+    log.log(`  ✅ Kontroll: ${checkResult.status} — ${checkResult.summary}`);
 
     // ── Sätter ihop den färdiga lektionen ────────────────────
     const finalLesson = {
@@ -94,10 +96,10 @@ async function runGeneration(lessonId, { topic, subject, level, duration, langua
     await saveLesson(lessonId, finalLesson);
 
     setProgress(lessonId, { step: 'done', svg_done: svgTotal, svg_total: svgTotal });
-    console.log(`  🎉 Lektion klar: ID ${lessonId}\n`);
+    log.log(`  🎉 Lektion klar: ID ${lessonId}\n`);
 
   } catch (error) {
-    console.error('❌ Fel vid generering:', error.message);
+    log.error('❌ Fel vid generering:', error.stack || error.message);
     setProgress(lessonId, { error: 'Fel vid generering av lektion' });
   }
 }
@@ -121,11 +123,15 @@ router.post('/extract-material', async (req, res) => {
     return res.status(400).json({ error: `Max ${MAX_MATERIAL_PAGES} sidor åt gången` });
   }
 
+  const log = scoped(uuidv4().slice(0, 8));
+  log.log('📄 Läser läroboksfoton...');
+
   try {
     const { title, text } = await extractTextbookMaterial(images, language || 'sv');
+    log.log('✅ Läroboksfoton avlästa');
     res.json({ success: true, title, text });
   } catch (error) {
-    console.error('❌ Fel vid läsning av läroboksfoton:', error.message);
+    log.error('❌ Fel vid läsning av läroboksfoton:', error.stack || error.message);
     res.status(500).json({ error: 'Kunde inte läsa av läroboksfotona, försök igen' });
   }
 });
@@ -162,39 +168,40 @@ router.post('/generate-from-material', (req, res) => {
 });
 
 async function runGenerationFromMaterial(lessonId, { material, subject, level, duration, language }) {
-  console.log(`\n📖 Genererar lektion från lärobok | ${subject} | ${level}`);
+  const log = scoped(lessonId.slice(0, 8));
+  log.log(`\n📖 Genererar lektion från lärobok | ${subject} | ${level}`);
 
   try {
     // ── Steg 1: Planner (endast från materialet) ────
-    console.log('  🗓  Planner: skapar plan från material...');
+    log.log('  🗓  Planner: skapar plan från material...');
     const plan = await planLessonFromMaterial({ material, subject, level, duration, language });
-    console.log(`  ✅ Plan klar: ${plan.blocks.length} block`);
+    log.log(`  ✅ Plan klar: ${plan.blocks.length} block`);
 
     // ── Steg 2: Writer (text) ───────────────────────
     setProgress(lessonId, { step: 'content' });
-    console.log('  ✍️  Writer: genererar innehåll...');
+    log.log('  ✍️  Writer: genererar innehåll...');
     const written = await writeLesson({ plan, level, language });
-    console.log('  ✅ Innehåll klart');
+    log.log('  ✅ Innehåll klart');
 
     // ── Steg 3: Illustrator (SVG per scen) ──────────
     const svgTotal = countIllustrableScenes(written.blocks);
     setProgress(lessonId, { step: 'svg', svg_done: 0, svg_total: svgTotal });
-    console.log(`  🎨 Illustrator: skapar ${svgTotal} illustrationer...`);
+    log.log(`  🎨 Illustrator: skapar ${svgTotal} illustrationer...`);
     await illustrateLesson(written.blocks, subject, (done, total) => {
       setProgress(lessonId, { step: 'svg', svg_done: done, svg_total: total });
     });
-    console.log('  ✅ Illustrationer klara');
+    log.log('  ✅ Illustrationer klara');
 
     // ── Steg 4: Checker ─────────────────────────────
     setProgress(lessonId, { step: 'check' });
-    console.log('  🔍 Checker: kontrollerar fakta...');
+    log.log('  🔍 Checker: kontrollerar fakta...');
     const checkResult = await checkLesson({ lesson: written, subject });
-    console.log(`  ✅ Kontroll: ${checkResult.status} — ${checkResult.summary}`);
+    log.log(`  ✅ Kontroll: ${checkResult.status} — ${checkResult.summary}`);
 
     // ── Steg 5: Källtrohetskontroll (endast lärobok-läget) ──
-    console.log('  📐 Kontrollerar källtrohet mot materialet...');
+    log.log('  📐 Kontrollerar källtrohet mot materialet...');
     const faithfulnessResult = await checkMaterialFaithfulness({ lesson: written, material });
-    console.log(`  ✅ Källtrohet: ${faithfulnessResult.status} — ${faithfulnessResult.summary}`);
+    log.log(`  ✅ Källtrohet: ${faithfulnessResult.status} — ${faithfulnessResult.summary}`);
 
     // ── Sätter ihop den färdiga lektionen ────────────────────
     const finalLesson = {
@@ -208,10 +215,10 @@ async function runGenerationFromMaterial(lessonId, { material, subject, level, d
     await saveLesson(lessonId, finalLesson);
 
     setProgress(lessonId, { step: 'done', svg_done: svgTotal, svg_total: svgTotal });
-    console.log(`  🎉 Lektion klar: ID ${lessonId}\n`);
+    log.log(`  🎉 Lektion klar: ID ${lessonId}\n`);
 
   } catch (error) {
-    console.error('❌ Fel vid generering från lärobok:', error.message);
+    log.error('❌ Fel vid generering från lärobok:', error.stack || error.message);
     setProgress(lessonId, { error: 'Fel vid generering av lektion från lärobok' });
   }
 }
