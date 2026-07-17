@@ -136,9 +136,40 @@ and voice playback + YouTube links are supported per block.
     a block, fully stopped and restarted the dev server (not just a
     nodemon reload), and confirmed `GET /api/lesson/:id` still returned
     the lesson with the edit intact.
+- Improved logging (`b29ffd6`): new `src/utils/logger.js` monkey-patches
+  `console.log`/`warn`/`error` once, globally, to prepend a `[HH:MM:SS]`
+  timestamp to every call in the project (no per-call-site changes
+  needed), and exports `scoped(id)` to additionally tag lines with a
+  `[lessonId]`/request-ID prefix so log lines from concurrent requests
+  can be told apart. Wired into `runGeneration` and
+  `runGenerationFromMaterial` in `src/routes/lesson.js` (tagged with a
+  short `lessonId`) and into the `/extract-material` route (tagged with
+  a fresh short request ID, plus a new start-of-request log line since
+  that route previously only logged on error). Also added `error.stack`
+  (not just `.message`) to the `catch` blocks in `extract-material`,
+  `runGeneration`, and `runGenerationFromMaterial`, so future errors
+  show exactly where in the code they originated instead of requiring
+  guesswork from log context.
 
 ## Next steps
 
+- Open bug, not yet root-caused: teachers have hit "Kunde inte läsa av
+  läroboksfotona, försök igen" (the `/extract-material` failure path).
+  The last attempt to reproduce it coincided in time with a separate,
+  concurrent topic-mode generation request, and with no timestamps or
+  request IDs in the logs at that point, the two requests' console
+  output got interleaved and couldn't be told apart — so the real cause
+  is still unconfirmed. Needs to be reproduced again in isolation (no
+  other requests in flight) now that logging has timestamps, request
+  IDs, and `error.stack` (see "What was completed" above), to get a
+  clean diagnosis.
+- Concrete geometry bugs spotted in AI-generated SVG illustrations: a
+  light ray rendered passing straight through an object instead of
+  reflecting off its surface at the correct point, and a spectrum
+  illustration with the wrong number/order of colors. Logged here as
+  cases to test against once a render→critique loop and/or a
+  reasoning-before-draw prompt for the illustrator agent exists (see
+  below) — not yet implemented.
 - Add a "Mina lektioner" screen to the frontend — a list of
   saved/archived lessons (via the already-built `listLessons`), with the
   ability to open a previously generated lesson instead of generating it
