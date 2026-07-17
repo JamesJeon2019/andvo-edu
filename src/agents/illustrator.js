@@ -1,4 +1,5 @@
 const Anthropic = require('@anthropic-ai/sdk');
+const { Resvg } = require('@resvg/resvg-js');
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
@@ -72,4 +73,22 @@ function sanitizeSVG(svg) {
   return cleaned;
 }
 
-module.exports = { generateSVG };
+/**
+ * Renderar en SVG-sträng till PNG server-side, uppskalad relativt illustratörens
+ * viewBox (400x300) så att en Vision-kritiker kan se detaljer (antal element,
+ * vinklar, färger) tydligt. Används bara internt för render→critique-loopen,
+ * aldrig för att visa bilden för lärare/elev — frontend renderar svg_content direkt.
+ * Ogiltig SVG → null, kastar aldrig (samma mönster som sanitizeSVG).
+ */
+function renderSVGToPNG(svgString, scale = 2.5) {
+  try {
+    const resvg = new Resvg(svgString, { fitTo: { mode: 'zoom', value: scale } });
+    const pngData = resvg.render();
+    const pngBuffer = pngData.asPng();
+    return `data:image/png;base64,${pngBuffer.toString('base64')}`;
+  } catch {
+    return null;
+  }
+}
+
+module.exports = { generateSVG, renderSVGToPNG };

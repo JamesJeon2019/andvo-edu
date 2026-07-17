@@ -1,14 +1,17 @@
 # Handoff — Andvo Edu
 
-_Last updated: 2026-07-09_
+_Last updated: 2026-07-16_
 
 ## Project status
 
 Andvo Edu is an AI-powered lesson generator for Swedish schools (Node.js +
 Express backend, Claude API for content generation, plain HTML/CSS/JS
 frontend, deployed on Render). `main` is clean and up to date with
-`origin/main` at commit `dd8c238`. Local dev server (`npm run dev`,
-port 3000) starts cleanly and `/health` responds as expected.
+`origin/main` at commit `37d24e1`. No commits or local changes since the
+last handoff update (2026-07-09) — the "What was completed" and "Next
+steps" sections below are unchanged from last week and still reflect the
+current state. Local dev server (`npm run dev`, port 3000) starts cleanly
+and `/health` responds as expected.
 
 Core flow is functional end-to-end: a lesson request goes through a
 planner agent → writer agent → (optional) SVG illustrator agent, blocks

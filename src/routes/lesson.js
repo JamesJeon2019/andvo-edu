@@ -7,11 +7,10 @@ const { writeLesson, writeBlock, illustrateLesson, illustrateBlockScenes, countI
 const { checkLesson, checkMaterialFaithfulness } = require('../agents/checker');
 const { generateSVG } = require('../agents/illustrator');
 const { searchYoutubeVideos, getCaptionTracks } = require('../agents/youtubeSearch');
-
-// In-memory lagring av lektioner (byt till PostgreSQL senare)
-const lessons = new Map();
+const { getLesson, saveLesson, archiveLesson, listLessons } = require('../db/lessonStore');
 
 // In-memory förloppsindikator per lektions-ID, för /status-polling under generering
+// (avsiktligt kortlivad — rensas aldrig mot databasen, se handoff.md)
 const progress = new Map();
 
 const STATUS_MESSAGES = {
@@ -92,7 +91,7 @@ async function runGeneration(lessonId, { topic, subject, level, duration, langua
       check: checkResult,
       createdAt: new Date().toISOString()
     };
-    lessons.set(lessonId, finalLesson);
+    await saveLesson(lessonId, finalLesson);
 
     setProgress(lessonId, { step: 'done', svg_done: svgTotal, svg_total: svgTotal });
     console.log(`  🎉 Lektion klar: ID ${lessonId}\n`);
@@ -206,7 +205,7 @@ async function runGenerationFromMaterial(lessonId, { material, subject, level, d
       source: 'material',
       createdAt: new Date().toISOString()
     };
-    lessons.set(lessonId, finalLesson);
+    await saveLesson(lessonId, finalLesson);
 
     setProgress(lessonId, { step: 'done', svg_done: svgTotal, svg_total: svgTotal });
     console.log(`  🎉 Lektion klar: ID ${lessonId}\n`);
@@ -242,8 +241,8 @@ router.get('/:id/status', (req, res) => {
  * GET /api/lesson/:id
  * Hämta en lektion via ID
  */
-router.get('/:id', (req, res) => {
-  const lesson = lessons.get(req.params.id);
+router.get('/:id', async (req, res) => {
+  const lesson = await getLesson(req.params.id);
   if (!lesson) return res.status(404).json({ error: 'Lektionen hittades inte' });
   res.json({ success: true, lesson });
 });
@@ -252,8 +251,8 @@ router.get('/:id', (req, res) => {
  * PUT /api/lesson/:id/block/:blockId
  * Uppdatera ett block (läraren redigerar)
  */
-router.put('/:id/block/:blockId', (req, res) => {
-  const lesson = lessons.get(req.params.id);
+router.put('/:id/block/:blockId', async (req, res) => {
+  const lesson = await getLesson(req.params.id);
   if (!lesson) return res.status(404).json({ error: 'Lektionen hittades inte' });
 
   const blockId = parseInt(req.params.blockId);
@@ -261,7 +260,7 @@ router.put('/:id/block/:blockId', (req, res) => {
   if (blockIndex === -1) return res.status(404).json({ error: 'Blocket hittades inte' });
 
   lesson.blocks[blockIndex] = { ...lesson.blocks[blockIndex], ...req.body };
-  lessons.set(lesson.id, lesson);
+  await saveLesson(lesson.id, lesson);
 
   res.json({ success: true, block: lesson.blocks[blockIndex] });
 });
@@ -270,13 +269,13 @@ router.put('/:id/block/:blockId', (req, res) => {
  * DELETE /api/lesson/:id/block/:blockId
  * Ta bort ett block
  */
-router.delete('/:id/block/:blockId', (req, res) => {
-  const lesson = lessons.get(req.params.id);
+router.delete('/:id/block/:blockId', async (req, res) => {
+  const lesson = await getLesson(req.params.id);
   if (!lesson) return res.status(404).json({ error: 'Lektionen hittades inte' });
 
   const blockId = parseInt(req.params.blockId);
   lesson.blocks = lesson.blocks.filter(b => b.id !== blockId);
-  lessons.set(lesson.id, lesson);
+  await saveLesson(lesson.id, lesson);
 
   res.json({ success: true, blocksRemaining: lesson.blocks.length });
 });
@@ -285,8 +284,8 @@ router.delete('/:id/block/:blockId', (req, res) => {
  * PUT /api/lesson/:id/block/:blockId/toggle
  * Dölj/visa ett block (tar inte bort det)
  */
-router.put('/:id/block/:blockId/toggle', (req, res) => {
-  const lesson = lessons.get(req.params.id);
+router.put('/:id/block/:blockId/toggle', async (req, res) => {
+  const lesson = await getLesson(req.params.id);
   if (!lesson) return res.status(404).json({ error: 'Lektionen hittades inte' });
 
   const blockId = parseInt(req.params.blockId);
@@ -294,7 +293,7 @@ router.put('/:id/block/:blockId/toggle', (req, res) => {
   if (!block) return res.status(404).json({ error: 'Blocket hittades inte' });
 
   block.visible = !block.visible;
-  lessons.set(lesson.id, lesson);
+  await saveLesson(lesson.id, lesson);
 
   res.json({ success: true, blockId, visible: block.visible });
 });
@@ -303,8 +302,8 @@ router.put('/:id/block/:blockId/toggle', (req, res) => {
  * PUT /api/lesson/:id/block/:blockId/youtube
  * Spara en YouTube-länk (försvinner inte vid navigering)
  */
-router.put('/:id/block/:blockId/youtube', (req, res) => {
-  const lesson = lessons.get(req.params.id);
+router.put('/:id/block/:blockId/youtube', async (req, res) => {
+  const lesson = await getLesson(req.params.id);
   if (!lesson) return res.status(404).json({ error: 'Lektionen hittades inte' });
 
   const blockId = parseInt(req.params.blockId);
@@ -314,7 +313,7 @@ router.put('/:id/block/:blockId/youtube', (req, res) => {
   block.content = block.content || {};
   block.content.youtube_url = req.body.url;
   block.youtube_url = req.body.url;
-  lessons.set(lesson.id, lesson);
+  await saveLesson(lesson.id, lesson);
 
   res.json({ success: true, youtube_url: req.body.url });
 });
@@ -326,7 +325,7 @@ router.put('/:id/block/:blockId/youtube', (req, res) => {
  * och manuellt när läraren skriver egna sökord ("Sök igen").
  */
 router.post('/:id/block/:blockId/youtube-search', async (req, res) => {
-  const lesson = lessons.get(req.params.id);
+  const lesson = await getLesson(req.params.id);
   if (!lesson) return res.status(404).json({ error: 'Lektionen hittades inte' });
 
   const { query } = req.body;
@@ -358,7 +357,7 @@ router.get('/youtube-captions/:videoId', async (req, res) => {
  * AI skriver om ett block enligt lärarens instruktion
  */
 router.post('/:id/block/:blockId/rewrite', async (req, res) => {
-  const lesson = lessons.get(req.params.id);
+  const lesson = await getLesson(req.params.id);
   if (!lesson) return res.status(404).json({ error: 'Lektionen hittades inte' });
 
   const blockId = parseInt(req.params.blockId);
@@ -385,7 +384,7 @@ router.post('/:id/block/:blockId/rewrite', async (req, res) => {
     await illustrateBlockScenes(rewritten, lesson.subject);
 
     lesson.blocks[blockIndex] = { ...rewritten, id: blockId };
-    lessons.set(lesson.id, lesson);
+    await saveLesson(lesson.id, lesson);
 
     res.json({ success: true, block: lesson.blocks[blockIndex] });
   } catch (error) {
@@ -400,7 +399,7 @@ router.post('/:id/block/:blockId/rewrite', async (req, res) => {
  * Body: { sceneIndex: 0, instruction: "valfri instruktion på svenska" }
  */
 router.post('/:id/block/:blockId/regenerate-svg', async (req, res) => {
-  const lesson = lessons.get(req.params.id);
+  const lesson = await getLesson(req.params.id);
   if (!lesson) return res.status(404).json({ error: 'Lektionen hittades inte' });
 
   const blockId = parseInt(req.params.blockId);
@@ -420,7 +419,7 @@ router.post('/:id/block/:blockId/regenerate-svg', async (req, res) => {
     scene.svg_content = svg;
     scene.custom_image = null;
     scene.custom_image_url = null;
-    lessons.set(lesson.id, lesson);
+    await saveLesson(lesson.id, lesson);
 
     res.json({ svg_content: svg });
   } catch (error) {
@@ -438,8 +437,8 @@ router.post('/:id/block/:blockId/regenerate-svg', async (req, res) => {
  * custom_image_url är ömsesidigt uteslutande — sätts den ena nollställs
  * den andra. Body: { custom_image: string|null, custom_image_url: string|null }
  */
-router.put('/:id/block/:blockId/scene/:sceneIndex/image', (req, res) => {
-  const lesson = lessons.get(req.params.id);
+router.put('/:id/block/:blockId/scene/:sceneIndex/image', async (req, res) => {
+  const lesson = await getLesson(req.params.id);
   if (!lesson) return res.status(404).json({ error: 'Lektionen hittades inte' });
 
   const blockId = parseInt(req.params.blockId);
@@ -454,7 +453,7 @@ router.put('/:id/block/:blockId/scene/:sceneIndex/image', (req, res) => {
   const { custom_image, custom_image_url } = req.body;
   scene.custom_image = custom_image || null;
   scene.custom_image_url = scene.custom_image ? null : (custom_image_url || null);
-  lessons.set(lesson.id, lesson);
+  await saveLesson(lesson.id, lesson);
 
   res.json({ success: true });
 });
@@ -463,8 +462,8 @@ router.put('/:id/block/:blockId/scene/:sceneIndex/image', (req, res) => {
  * PUT /api/lesson/:id/blocks/reorder
  * Ändra ordningen på blocken
  */
-router.put('/:id/blocks/reorder', (req, res) => {
-  const lesson = lessons.get(req.params.id);
+router.put('/:id/blocks/reorder', async (req, res) => {
+  const lesson = await getLesson(req.params.id);
   if (!lesson) return res.status(404).json({ error: 'Lektionen hittades inte' });
 
   const { order } = req.body; // array med ID:n i ny ordning
@@ -472,26 +471,28 @@ router.put('/:id/blocks/reorder', (req, res) => {
 
   const reordered = order.map(id => lesson.blocks.find(b => b.id === id)).filter(Boolean);
   lesson.blocks = reordered;
-  lessons.set(lesson.id, lesson);
+  await saveLesson(lesson.id, lesson);
 
   res.json({ success: true, blocks: lesson.blocks });
 });
 
 /**
  * GET /api/lesson
- * Lista alla lektioner (för läraren)
+ * Lista alla lektioner (för läraren) — lättviktig sammanfattning utan
+ * fullständig data, se listLessons i src/db/lessonStore.js.
  */
-router.get('/', (req, res) => {
-  const list = Array.from(lessons.values()).map(l => ({
-    id: l.id,
-    title: l.title,
-    subject: l.subject,
-    level: l.level,
-    duration: l.duration,
-    blocksCount: l.blocks.length,
-    createdAt: l.createdAt
-  }));
+router.get('/', async (req, res) => {
+  const list = await listLessons();
   res.json({ success: true, lessons: list });
+});
+
+/**
+ * PUT /api/lesson/:id/archive
+ * Arkiverar en lektion (status = 'archived') utan att radera den.
+ */
+router.put('/:id/archive', async (req, res) => {
+  await archiveLesson(req.params.id);
+  res.json({ success: true });
 });
 
 module.exports = router;

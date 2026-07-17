@@ -2,8 +2,10 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
+const fs = require('fs');
 const rateLimit = require('express-rate-limit');
 
+const pool = require('./db/pool');
 const lessonRoutes = require('./routes/lesson');
 const imageRoutes = require('./routes/image');
 
@@ -59,8 +61,24 @@ app.use((err, req, res, next) => {
   next(err);
 });
 
+// ── Databasmigrering ─────────────────────────────────
+// Enkel "CREATE TABLE IF NOT EXISTS"-migrering vid uppstart — ingen
+// fullständig migration-ramverk behövs för en enda tabell.
+async function runMigrations() {
+  const schema = fs.readFileSync(path.join(__dirname, 'db/schema.sql'), 'utf8');
+  await pool.query(schema);
+  console.log('✅ Databasschema klart');
+}
+
 // ── Start ───────────────────────────────────────────
-app.listen(PORT, () => {
-  console.log(`✅ Andvo Edu igång på port ${PORT}`);
-  console.log(`🌐 http://localhost:${PORT}`);
-});
+runMigrations()
+  .then(() => {
+    app.listen(PORT, () => {
+      console.log(`✅ Andvo Edu igång på port ${PORT}`);
+      console.log(`🌐 http://localhost:${PORT}`);
+    });
+  })
+  .catch((error) => {
+    console.error('❌ Kunde inte köra databasmigrering:', error.message);
+    process.exit(1);
+  });
