@@ -1,13 +1,13 @@
 # Handoff — Andvo Edu
 
-_Last updated: 2026-07-17_
+_Last updated: 2026-07-19_
 
 ## Project status
 
 Andvo Edu is an AI-powered lesson generator for Swedish schools (Node.js +
 Express backend, Claude API for content generation, plain HTML/CSS/JS
 frontend, deployed on Render). `main` is clean and up to date with
-`origin/main` at commit `6cce9b3`. Lesson storage now persists in a real
+`origin/main` at commit `ae5a81f`. Lesson storage now persists in a real
 Postgres database (Neon) instead of an in-memory Map — see "What was
 completed" below. Local dev server (`npm run dev`, port 3000) starts
 cleanly, runs the DB migration on boot, and `/health` responds as
@@ -150,6 +150,33 @@ and voice playback + YouTube links are supported per block.
   `runGeneration`, and `runGenerationFromMaterial`, so future errors
   show exactly where in the code they originated instead of requiring
   guesswork from log context.
+- Fixed a reported bug where the "Använd →" button (next to the URL input
+  in "Ersätt bild" → "Klistra in länk" on a scene) wasn't visible, in two
+  independent parts:
+  - On narrow/mobile screens (`f8e3337`): `.editor-body` had no responsive
+    breakpoint, so the fixed 240px `.sidebar` and `#mainContent` always
+    split the viewport width evenly, even on a ~380px phone screen. That
+    squeezed the scene card down to ~84px wide, forcing `.scene-paste-row`
+    (whose `.tinput` has `min-width:180px`) to overflow its ancestor,
+    which then got clipped by `.scene{overflow:hidden}` — the button
+    existed in the DOM with no JS errors but was never painted. Fixed
+    with a `@media (max-width:680px)` block that stacks `.editor-body`
+    into a column and lets `.main` use the full width.
+  - On desktop/wide screens (`ae5a81f`) — a second, unrelated bug, not a
+    width issue: `.editor-header` is `position:sticky;top:0;z-index:10`,
+    and if a scene's controls row happens to land near the top of the
+    page after scrolling (common on any real multi-block lesson), the
+    sticky header visually *and* functionally overlaps the row —
+    confirmed with `document.elementFromPoint()` on the button's
+    coordinates returning `.editor-header`, not the button, i.e. clicks
+    there were being swallowed by the header. Fixed by adding
+    `scrollRowBelowHeader()`, called from `togglePasteRow`/
+    `toggleReplaceRow`/`toggleInstructionRow`, which nudges the page
+    scroll so a just-opened row always ends up clear of the header.
+  - Both verified with Playwright against the real dev server (mobile
+    380×720 viewport and desktop 1920×1080 with a multi-scene lesson
+    scrolled to reproduce each case), including before/after screenshots
+    and a real click through to `submitImageUrl` → `/api/image/validate`.
 
 ## Next steps
 
@@ -201,3 +228,10 @@ and voice playback + YouTube links are supported per block.
 - Manually smoke test the full generation pipeline (topic → planner →
   writer → illustrator → SVG scenes) to confirm the topic-adherence and
   SVG container fixes hold up in practice.
+- General pattern worth keeping in mind for future UI work: any
+  toggled/collapsible control that gets revealed near the top of the page
+  (like the scene "Klistra in länk" row) can end up hidden under the
+  sticky `.editor-header` depending on scroll position, the same way the
+  "Använd →" button did. New elements like this should either call
+  `scrollRowBelowHeader()` (see "What was completed" above) or otherwise
+  account for the sticky header when they open.
