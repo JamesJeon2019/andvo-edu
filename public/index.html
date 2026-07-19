@@ -196,6 +196,16 @@
   .scene-instr-row,.scene-replace-row,.scene-paste-row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;}
   .scene-instr-row .tinput,.scene-paste-row .tinput{min-height:auto;padding:8px 10px;flex:1;min-width:180px;}
   .scene-err{color:var(--red);font-size:12px;}
+
+  /* ── Mobil: sidopanelen (fast 240px) klämde annars ihop huvudinnehållet
+     till en smal kolumn, vilket fick t.ex. scen-kontrollernas knappar
+     (som "Använd →" i "Klistra in länk") att svämma över sin klippta
+     (overflow:hidden) förälder .scene och bli osynliga/oklickbara. ── */
+  @media (max-width:680px){
+    .editor-body{flex-direction:column;}
+    .sidebar{width:100%;max-height:none;position:static;border-right:none;border-bottom:1px solid var(--border);}
+    .main{padding:16px;max-width:100%;}
+  }
 </style>
 </head>
 <body>
