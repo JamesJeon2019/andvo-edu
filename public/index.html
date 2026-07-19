@@ -621,19 +621,42 @@ function clearSceneError(idx, si) {
   if (el) { el.textContent = ''; el.style.display = 'none'; }
 }
 
+// Den sticky .editor-header (position:sticky, z-index:10) ligger annars
+// ovanpå en rad som just har fällts ut om raden hamnar högst upp i den
+// synliga ytan (t.ex. #sceneUrlInput.../"Använd →"-knappen) — den fanns i
+// DOM:en och var tekniskt inom viewporten, men visuellt dold bakom headern.
+// Rulla ner den fällda raden så den alltid hamnar under headern.
+function scrollRowBelowHeader(row) {
+  if (!row) return;
+  requestAnimationFrame(() => {
+    const header = document.querySelector('.editor-header');
+    const headerBottom = header ? header.getBoundingClientRect().bottom : 0;
+    const rowTop = row.getBoundingClientRect().top;
+    if (rowTop < headerBottom + 8) {
+      window.scrollBy({ top: rowTop - headerBottom - 8, behavior: 'smooth' });
+    }
+  });
+}
+
 function toggleInstructionRow(idx, si) {
   const row = document.getElementById(`sceneInstrRow${idx}_${si}`);
-  if (row) row.style.display = (row.style.display === 'none') ? 'flex' : 'none';
+  if (!row) return;
+  row.style.display = (row.style.display === 'none') ? 'flex' : 'none';
+  if (row.style.display === 'flex') scrollRowBelowHeader(row);
 }
 
 function toggleReplaceRow(idx, si) {
   const row = document.getElementById(`sceneReplaceRow${idx}_${si}`);
-  if (row) row.style.display = (row.style.display === 'none') ? 'flex' : 'none';
+  if (!row) return;
+  row.style.display = (row.style.display === 'none') ? 'flex' : 'none';
+  if (row.style.display === 'flex') scrollRowBelowHeader(row);
 }
 
 function togglePasteRow(idx, si) {
   const row = document.getElementById(`scenePasteRow${idx}_${si}`);
-  if (row) row.style.display = (row.style.display === 'none') ? 'flex' : 'none';
+  if (!row) return;
+  row.style.display = (row.style.display === 'none') ? 'flex' : 'none';
+  if (row.style.display === 'flex') scrollRowBelowHeader(row);
 }
 
 async function callRegenerateSvg(idx, si, instruction) {
