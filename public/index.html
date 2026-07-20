@@ -197,6 +197,15 @@
   .scene-instr-row .tinput,.scene-paste-row .tinput{min-height:auto;padding:8px 10px;flex:1;min-width:180px;}
   .scene-err{color:var(--red);font-size:12px;}
 
+  /* ── Mina lektioner ── */
+  .lesson-row{display:flex;flex-direction:column;gap:4px;padding:12px 14px;border:1px solid var(--border);border-radius:9px;cursor:pointer;transition:border-color .2s,background .2s;margin-bottom:8px;}
+  .lesson-row:hover{border-color:var(--accent);background:var(--surface2);}
+  .lesson-row-title{font-size:14px;font-weight:600;color:var(--text);}
+  .lesson-row-meta{font-size:12px;color:var(--muted);display:flex;gap:8px;flex-wrap:wrap;align-items:center;}
+  .lesson-status-pill{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;padding:2px 8px;border-radius:20px;}
+  .lesson-status-draft{background:rgba(108,143,255,.15);color:var(--accent);}
+  .lesson-status-archived{background:rgba(107,112,148,.25);color:var(--muted);}
+
   /* ── Mobil: sidopanelen (fast 240px) klämde annars ihop huvudinnehållet
      till en smal kolumn, vilket fick t.ex. scen-kontrollernas knappar
      (som "Använd →" i "Klistra in länk") att svämma över sin klippta
@@ -214,6 +223,7 @@
 <div id="setup">
   <div class="logo">Andvo <span>Edu</span></div>
   <div class="tagline">AI-genererad lektion för svenska skolor</div>
+  <button type="button" class="hbtn" onclick="openLessonsList()">📚 Mina lektioner</button>
   <div class="card">
     <label>Ämne</label>
     <select id="subject">
@@ -300,6 +310,23 @@
   </div>
 </div>
 
+<!-- Öppnar en lektion (från lista eller direktlänk) -->
+<div id="lessonOpening" style="display:none;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;gap:16px;">
+  <div class="spinner"></div>
+  <div style="color:var(--accent);font-weight:600;">Öppnar lektion...</div>
+</div>
+
+<!-- MINA LEKTIONER -->
+<div id="lessonsList" style="display:none;flex-direction:column;align-items:center;min-height:100vh;padding:24px;gap:16px;">
+  <div class="logo">Andvo <span>Edu</span></div>
+  <div class="tagline">Mina lektioner</div>
+  <div class="card" style="max-width:640px;">
+    <div id="lessonsListBody"><p style="color:var(--muted);font-size:13px;">Laddar...</p></div>
+    <div class="error-box" id="lessonsListErrBox"></div>
+    <button class="hbtn" style="width:100%;padding:11px;font-size:14px;" onclick="showScreen('setup')">← Tillbaka</button>
+  </div>
+</div>
+
 <!-- EDITOR -->
 <div id="editor">
   <div class="editor-header">
@@ -309,6 +336,7 @@
     </div>
     <div style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap;">
       <button class="hbtn" onclick="backToSetup()">← Ny lektion</button>
+      <button class="hbtn" id="archiveBtn" onclick="archiveCurrentLesson()">📁 Arkivera</button>
       <button class="hbtn pr" onclick="alert('Elevvy kommer snart!')">👁 Elevvy →</button>
     </div>
   </div>
@@ -328,7 +356,157 @@
 let lvl = 'mid';
 let lessonId = null;
 let lesson = null;
+let lessonStatus = 'draft';
 let currentBlockIdx = 0;
+
+/* ══════════════════ SKÄRMNAVIGERING & URL-SYNK (?lesson=<id>) ══════════════════ */
+const SCREEN_IDS = ['setup', 'loading', 'materialReading', 'materialConfirm', 'lessonOpening', 'lessonsList', 'editor'];
+
+function showScreen(id) {
+  SCREEN_IDS.forEach(s => {
+    const el = document.getElementById(s);
+    if (el) el.style.display = (s === id) ? 'flex' : 'none';
+  });
+}
+
+function setLessonUrlParam(id) {
+  const url = new URL(window.location.href);
+  if (url.searchParams.get('lesson') === id) return;
+  url.searchParams.set('lesson', id);
+  history.pushState({ lessonId: id }, '', url);
+}
+
+function clearLessonUrlParam() {
+  const url = new URL(window.location.href);
+  if (!url.searchParams.has('lesson')) return;
+  url.searchParams.delete('lesson');
+  history.pushState({}, '', url.pathname + url.search);
+}
+
+/**
+ * Öppnar en lektion via ID — används både från "Mina lektioner"-listan och
+ * vid direktladdning från URL:ens ?lesson=-parameter. Hämtar även
+ * lektionslistan för att slå upp status (utkast/arkiverad), eftersom
+ * GET /api/lesson/:id bara returnerar själva lektionsdatan utan status.
+ */
+async function openLessonById(id) {
+  showScreen('lessonOpening');
+  try {
+    const [lessonRes, listRes] = await Promise.all([
+      fetch(`/api/lesson/${id}`),
+      fetch('/api/lesson')
+    ]);
+    const lessonData = await lessonRes.json();
+    if (!lessonRes.ok || !lessonData.success) throw new Error(lessonData.error || 'Lektionen hittades inte');
+
+    const listData = await listRes.json();
+    const row = (listData.success && listData.lessons) ? listData.lessons.find(l => l.id === id) : null;
+
+    lesson = lessonData.lesson;
+    lessonId = id;
+    lessonStatus = row ? row.status : 'draft';
+    renderEditor();
+  } catch (e) {
+    showScreen('setup');
+    clearLessonUrlParam();
+    const errBox = document.getElementById('errBox');
+    errBox.textContent = 'Kunde inte öppna lektionen: ' + e.message;
+    errBox.style.display = 'block';
+  }
+}
+
+async function initFromUrl() {
+  const params = new URLSearchParams(window.location.search);
+  const id = params.get('lesson');
+  if (id) await openLessonById(id);
+}
+document.addEventListener('DOMContentLoaded', initFromUrl);
+
+window.addEventListener('popstate', () => {
+  const params = new URLSearchParams(window.location.search);
+  const id = params.get('lesson');
+  if (id) {
+    openLessonById(id);
+  } else {
+    stopSpeech();
+    showScreen('setup');
+    lesson = null; lessonId = null; lessonStatus = 'draft';
+  }
+});
+
+/* ══════════════════ MINA LEKTIONER ══════════════════ */
+const LESSON_MODE_LABEL = { ai: 'AI', material: 'Lärobok' };
+const LESSON_STATUS_LABEL = { draft: 'Utkast', archived: 'Arkiverad' };
+
+function formatLessonDate(iso) {
+  const d = new Date(iso);
+  if (isNaN(d)) return '';
+  return d.toLocaleString('sv-SE', { dateStyle: 'medium', timeStyle: 'short' });
+}
+
+function openLessonsList() {
+  showScreen('lessonsList');
+  loadLessonsList();
+}
+
+async function loadLessonsList() {
+  const body = document.getElementById('lessonsListBody');
+  const errBox = document.getElementById('lessonsListErrBox');
+  errBox.style.display = 'none';
+  body.innerHTML = '<p style="color:var(--muted);font-size:13px;">Laddar...</p>';
+
+  try {
+    const res = await fetch('/api/lesson');
+    const data = await res.json();
+    if (!data.success) throw new Error(data.error || 'Okänt fel');
+
+    const list = data.lessons || [];
+    if (!list.length) {
+      body.innerHTML = '<p style="color:var(--muted);font-size:13px;">Inga sparade lektioner än.</p>';
+      return;
+    }
+
+    body.innerHTML = list.map(l => `
+      <div class="lesson-row" onclick="openLessonById('${l.id}')">
+        <div class="lesson-row-title">${escapeHtml(l.title || '(namnlös lektion)')}</div>
+        <div class="lesson-row-meta">
+          <span>${escapeHtml(l.subject || '')}</span>
+          <span>${escapeHtml(LESSON_MODE_LABEL[l.mode] || l.mode || '')}</span>
+          <span>${formatLessonDate(l.created_at)}</span>
+          <span class="lesson-status-pill lesson-status-${l.status}">${escapeHtml(LESSON_STATUS_LABEL[l.status] || l.status)}</span>
+        </div>
+      </div>`).join('');
+  } catch (e) {
+    body.innerHTML = '';
+    errBox.textContent = 'Fel: ' + e.message;
+    errBox.style.display = 'block';
+  }
+}
+
+async function archiveCurrentLesson() {
+  if (!lessonId || lessonStatus === 'archived') return;
+  if (!confirm('Arkivera lektionen?')) return;
+  try {
+    const res = await fetch(`/api/lesson/${lessonId}/archive`, { method: 'PUT' });
+    const data = await res.json();
+    if (!res.ok || !data.success) throw new Error(data.error || 'Okänt fel');
+    lessonStatus = 'archived';
+    updateEditorHeaderStatus();
+  } catch (e) {
+    alert('Fel vid arkivering: ' + e.message);
+  }
+}
+
+function updateEditorHeaderStatus() {
+  const lvlMap = { weak: '🟢 Grundläggande', mid: '🔵 Medel', strong: '🟣 Avancerad' };
+  document.getElementById('edMeta').textContent =
+    `${lesson.subject} · ${lvlMap[lesson.level]} · ${lesson.duration} min · ${lesson.blocks.length} block` +
+    (lesson.source === 'material' ? ' · 📷 Från lärobok' : '') +
+    (lessonStatus === 'archived' ? ' · 🗄 Arkiverad' : '');
+
+  const archiveBtn = document.getElementById('archiveBtn');
+  if (archiveBtn) archiveBtn.style.display = (lessonStatus === 'archived') ? 'none' : '';
+}
 
 /* ══════════════════ RÖSTUPPLÄSNING (Web Speech API) ══════════════════ */
 let allVoices = [];
@@ -1131,6 +1309,7 @@ async function checkLessonStatus() {
       const ldata = await lres.json();
       if (!ldata.success) throw new Error(ldata.error || 'Kunde inte hämta lektionen');
       lesson = ldata.lesson;
+      lessonStatus = 'draft';
       setTimeout(() => renderEditor(), 300);
     }
   } catch (e) {
@@ -1161,14 +1340,11 @@ function updateLoadingSteps(data) {
 }
 
 function renderEditor() {
-  document.getElementById('loading').style.display = 'none';
-  document.getElementById('editor').style.display = 'flex';
+  showScreen('editor');
+  setLessonUrlParam(lessonId);
 
-  const lvlMap = { weak:'🟢 Grundläggande', mid:'🔵 Medel', strong:'🟣 Avancerad' };
   document.getElementById('edTitle').textContent = lesson.title;
-  document.getElementById('edMeta').textContent =
-    `${lesson.subject} · ${lvlMap[lesson.level]} · ${lesson.duration} min · ${lesson.blocks.length} block` +
-    (lesson.source === 'material' ? ' · 📷 Från lärobok' : '');
+  updateEditorHeaderStatus();
 
   // Check bar
   const cb = document.getElementById('checkBar');
@@ -1176,6 +1352,8 @@ function renderEditor() {
     const cls = lesson.check.status==='ok'?'check-ok':lesson.check.status==='warnings'?'check-warn':'check-err';
     const icon = lesson.check.status==='ok'?'✅':lesson.check.status==='warnings'?'⚠️':'❌';
     cb.innerHTML = `<div class="check-bar ${cls}">${icon} Faktagranskning: ${lesson.check.summary}</div>`;
+  } else {
+    cb.innerHTML = '';
   }
 
   buildSidebar();
@@ -1545,9 +1723,9 @@ async function rewriteBlock(idx) {
 function backToSetup() {
   if (!confirm('Gå tillbaka? Lektionen sparas inte permanent än.')) return;
   stopSpeech();
-  document.getElementById('editor').style.display = 'none';
-  document.getElementById('setup').style.display = 'flex';
-  lesson = null; lessonId = null;
+  showScreen('setup');
+  clearLessonUrlParam();
+  lesson = null; lessonId = null; lessonStatus = 'draft';
   materialImages = [];
   renderMaterialThumbs();
   document.getElementById('materialTitle').value = '';
