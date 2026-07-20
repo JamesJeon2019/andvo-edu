@@ -1,13 +1,13 @@
 # Handoff — Andvo Edu
 
-_Last updated: 2026-07-19_
+_Last updated: 2026-07-20_
 
 ## Project status
 
 Andvo Edu is an AI-powered lesson generator for Swedish schools (Node.js +
 Express backend, Claude API for content generation, plain HTML/CSS/JS
 frontend, deployed on Render). `main` is clean and up to date with
-`origin/main` at commit `ae5a81f`. Lesson storage now persists in a real
+`origin/main` at commit `8282e60`. Lesson storage now persists in a real
 Postgres database (Neon) instead of an in-memory Map — see "What was
 completed" below. Local dev server (`npm run dev`, port 3000) starts
 cleanly, runs the DB migration on boot, and `/health` responds as
@@ -177,6 +177,56 @@ and voice playback + YouTube links are supported per block.
     380×720 viewport and desktop 1920×1080 with a multi-scene lesson
     scrolled to reproduce each case), including before/after screenshots
     and a real click through to `submitImageUrl` → `/api/image/validate`.
+- Added a shareable lesson URL and a "Mina lektioner" list screen
+  (`a755a0c`), frontend-only, on top of the already-existing
+  `GET /api/lesson` / `PUT /api/lesson/:id/archive` endpoints:
+  - `public/index.html`: opening a lesson (after generation or from the
+    list) now calls `history.pushState` to set `?lesson=<id>` in the URL;
+    on page load, `initFromUrl()` checks for that param and loads the
+    lesson directly via `GET /api/lesson/:id` instead of showing the
+    setup screen. A `popstate` handler keeps the browser's back/forward
+    buttons working correctly.
+  - New "Mina lektioner" screen, reachable from the setup screen, lists
+    saved lessons (title, subject, mode AI/lärobok, status
+    utkast/arkiverad, formatted `created_at`) via `GET /api/lesson`;
+    clicking a row opens it through the same `openLessonById()` path used
+    by the URL param.
+  - New "📁 Arkivera" button in the editor header calls
+    `PUT /api/lesson/:id/archive` and hides itself once archived. Since
+    `GET /api/lesson/:id` only returns the lesson's `data` blob (no
+    `status` column), `openLessonById()` also fetches `GET /api/lesson`
+    to look up that row's status.
+  - Verified end-to-end with Playwright against the real dev server:
+    generated a real test lesson, opened its exact `?lesson=` URL in a
+    brand-new page (simulating paste-into-new-tab), confirmed it loaded
+    directly with the right title; confirmed the lesson appeared in
+    "Mina lektioner" and opening it from the list worked; archived it and
+    confirmed the button stayed hidden across a reload and the list
+    showed "Arkiverad".
+- Made `POST /api/image/validate` resilient to sites that reject
+  non-browser requests (`8282e60`) — many image hosts (Google Images,
+  stock-photo sites, most CDNs) were returning 403/HTML for a bare HEAD
+  request, failing validation even for links that work fine in a real
+  browser:
+  - Added a realistic desktop Chrome `User-Agent` header to both the HEAD
+    and GET(fallback) requests.
+  - Added a 5s timeout via `AbortController` on each request (previously
+    unbounded).
+  - Added a GET fallback with `Range: bytes=0-1024` (only the first ~1KB
+    is fetched, not the whole image) for hosts that don't support HEAD
+    correctly (405, or any non-2xx status) or where HEAD errors out or
+    times out; if HEAD itself succeeds (2xx), its result is trusted
+    directly with no extra request.
+  - `redirect: 'follow'` set explicitly (fetch's default, but locked in
+    and verified against a real 302).
+  - Verified against real image URLs from multiple sources (Wikimedia
+    direct `.jpg`, Google's own `gstatic.com` CDN, Khan Academy's
+    educational CDN, a Shutterstock preview CDN URL, and an imgur
+    redirect) — all now pass; a real HTML page and a nonexistent domain
+    correctly still fail. Also verified the GET-fallback path itself
+    against a local mock server that returns 405 on HEAD and a real
+    image on GET, and the timeout against a local mock server that never
+    responds (correctly bounded at ~10s, not indefinite).
 
 ## Next steps
 
@@ -197,10 +247,6 @@ and voice playback + YouTube links are supported per block.
   cases to test against once a render→critique loop and/or a
   reasoning-before-draw prompt for the illustrator agent exists (see
   below) — not yet implemented.
-- Add a "Mina lektioner" screen to the frontend — a list of
-  saved/archived lessons (via the already-built `listLessons`), with the
-  ability to open a previously generated lesson instead of generating it
-  again.
 - Build out a proper render→critique loop for the SVG illustrator: render
   the generated SVG to PNG server-side (`renderSVGToPNG` in
   `src/agents/illustrator.js`, using `resvg-js`, already added but not
@@ -235,3 +281,12 @@ and voice playback + YouTube links are supported per block.
   "Använd →" button did. New elements like this should either call
   `scrollRowBelowHeader()` (see "What was completed" above) or otherwise
   account for the sticky header when they open.
+- No multi-user architecture yet: there's no teacher authentication, and
+  `GET /api/lesson` currently returns every lesson in the database to any
+  caller with no per-user scoping. Needs discussion (who owns a lesson,
+  what auth approach, expected load) before this goes live for multiple
+  schools/teachers at once.
+- (Minor, not urgent) `POST /api/image/validate` can take up to ~10s on a
+  genuinely broken link (5s HEAD timeout + 5s GET-fallback timeout, both
+  via `AbortController`). Consider shortening the timeouts if this
+  generates slowness complaints.
