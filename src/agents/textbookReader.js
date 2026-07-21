@@ -1,4 +1,5 @@
 const Anthropic = require('@anthropic-ai/sdk');
+const { tryParseJson } = require('../utils/jsonParse');
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
@@ -9,34 +10,6 @@ function parseDataUrl(dataUrl) {
   if (!match) return null;
   const mediaType = match[1].toLowerCase() === 'image/jpg' ? 'image/jpeg' : match[1];
   return { mediaType, data: match[2] };
-}
-
-/**
- * Försöker tolka modellens svar som JSON även när Claude, trots
- * instruktionen att bara svara med JSON, ändå skriver en inledande eller
- * avslutande mening runt objektet (t.ex. "Here is the transcription: {...}").
- * Provar först hela svaret (efter att ev. markdown-kodblock tagits bort),
- * och faller sedan tillbaka på att klippa ut allt mellan den första '{'
- * och den sista '}'.
- *
- * TODO: samma JSON.parse(clean)-mönster finns i planner.js, writer.js och
- * checker.js och kan drabbas av samma problem — att göra dem lika robusta
- * är en separat, bredare uppgift.
- */
-function tryParseJson(rawText) {
-  const stripped = rawText.replace(/```json|```/g, '').trim();
-  try {
-    return JSON.parse(stripped);
-  } catch (e) {
-    const start = stripped.indexOf('{');
-    const end = stripped.lastIndexOf('}');
-    if (start === -1 || end === -1 || end <= start) return null;
-    try {
-      return JSON.parse(stripped.slice(start, end + 1));
-    } catch (e2) {
-      return null;
-    }
-  }
 }
 
 /**

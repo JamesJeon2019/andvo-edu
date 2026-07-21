@@ -1,4 +1,5 @@
 const Anthropic = require('@anthropic-ai/sdk');
+const { tryParseJson } = require('../utils/jsonParse');
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
@@ -64,8 +65,11 @@ If there are no errors, return status: "ok" and an empty issues array.`;
     });
 
     const text = response.content[0].text.trim();
-    const clean = text.replace(/```json|```/g, '').trim();
-    return JSON.parse(clean);
+    const result = tryParseJson(text);
+    if (!result) {
+      throw new Error('Kunde inte tolka JSON-svar');
+    }
+    return result;
   } catch (e) {
     // Checker misslyckanden ska aldrig blockera lektionen från att visas
     console.warn('Checker warning:', e.message);
@@ -126,8 +130,11 @@ Use "error" for added facts/numbers/claims that could mislead the teacher into t
     });
 
     const text = response.content[0].text.trim();
-    const clean = text.replace(/```json|```/g, '').trim();
-    return JSON.parse(clean);
+    const result = tryParseJson(text);
+    if (!result) {
+      throw new Error('Kunde inte tolka JSON-svar');
+    }
+    return result;
   } catch (e) {
     // Checker misslyckanden ska aldrig blockera lektionen från att visas
     console.warn('Faithfulness checker warning:', e.message);
