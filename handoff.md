@@ -1,13 +1,13 @@
 # Handoff — Andvo Edu
 
-_Last updated: 2026-07-21_
+_Last updated: 2026-07-21 (later same day)_
 
 ## Project status
 
 Andvo Edu is an AI-powered lesson generator for Swedish schools (Node.js +
 Express backend, Claude API for content generation, plain HTML/CSS/JS
 frontend, deployed on Render). `main` is clean and up to date with
-`origin/main` at commit `fb1a551`. Lesson storage now persists in a real
+`origin/main` at commit `c2c5287`. Lesson storage now persists in a real
 Postgres database (Neon) instead of an in-memory Map — see "What was
 completed" below. Local dev server (`npm run dev`, port 3000) starts
 cleanly, runs the DB migration on boot, and `/health` responds as
@@ -264,30 +264,56 @@ and voice playback + YouTube links are supported per block.
   recovered and used instead of falling back, while a truncated/
   unparseable reply (reproducing the real "Unterminated string in JSON"
   incident) still falls back exactly as before.
+- Added auto-assign of textbook page photos to lecture-block scenes in
+  "material" mode (`c2c5287`): new `src/agents/sceneImageMatcher.js`
+  (`assignSourceImages`), wired into `runGenerationFromMaterial` right
+  after `writeLesson`, before `illustrateLesson`. Only called for
+  `type === 'lecture'` blocks — task/test blocks are skipped entirely,
+  never even attempted. The AI SVG illustrator still runs for every scene
+  as before, untouched — a scene's `custom_image` (when auto-assigned) is
+  just picked up by the frontend's existing image-over-svg render
+  priority, so the photo becomes the default illustration with no
+  render-side changes needed. `finalLesson.sourceImages` is now
+  persisted, for a future manual "pick a different page" control for
+  teachers (not built yet). Verified on a real generation (Geografi,
+  "Vattnets kretslopp"): 4 scenes in the lecture block correctly got the
+  actual uploaded photo as `custom_image`, task/test blocks got none.
+  Cost: ~2.4s for one Vision call per lecture block (not per scene) — an
+  order of magnitude cheaper than the illustrator's render→critique loop.
 
 ## Next steps
 
-- Open bug, not yet root-caused: teachers have hit "Kunde inte läsa av
-  läroboksfotona, försök igen" (the `/extract-material` failure path).
-  The last attempt to reproduce it coincided in time with a separate,
-  concurrent topic-mode generation request, and with no timestamps or
-  request IDs in the logs at that point, the two requests' console
-  output got interleaved and couldn't be told apart — so the real cause
-  is still unconfirmed. Needs to be reproduced again in isolation (no
-  other requests in flight) now that logging has timestamps, request
-  IDs, and `error.stack` (see "What was completed" above), to get a
-  clean diagnosis.
-- Auto-assign photos of textbook pages to lecture-block scenes in
-  "material" mode (instead of, or alongside, the AI-generated SVG) —
-  designed but not yet implemented.
+- Resolved / false alarm: the previously-logged "Kunde inte läsa av
+  läroboksfotona, försök igen" report (the `/extract-material` failure
+  path) was investigated further. The real cause turned out to be an
+  exhausted Anthropic API balance and/or several generations running
+  concurrently at the time, not a bug in the code — closing this out, no
+  code fix needed.
 - Investigate a user report of comprehension/interpretation errors in
   lessons generated via "Från lärobok" (the writer misunderstanding the
   text or a phenomenon it describes). Not yet started — need concrete
   screenshots from the user to diagnose before any fix can be scoped.
-- Add `variants: { ai, textbook }` to the lesson/block content model, so
-  a lesson can hold both an AI-generated version and a from-textbook
-  version of its content side by side (rather than one replacing the
-  other), with a way to switch between them per block.
+- Open, unresolved strategic question: is illustration quality/accuracy
+  good enough to actually sell this to teachers outside internal use
+  (where soft bugs are tolerable and feedback is direct/personal)?
+  Concrete example: subtle geometric inaccuracies — e.g. a "topp"/peak
+  label on a wave graph offset by a few pixels from the curve's actual
+  peak — are a different class of error than gross conceptual ones (a ray
+  passing straight through an object), and the existing Vision critic
+  (render→critique loop, see "What was completed" above) is bad at
+  catching exactly this kind of subtlety, because it visually looks
+  almost fine even to a Vision model. Discussed an alternative: a
+  programmatic (non-Vision) geometric check for parameterizable shapes
+  (sine waves, function graphs — parse coordinates out of the SVG path
+  and compare against mathematically expected points) — but this only
+  applies narrowly (mainly Matematik/Fysik), doesn't scale to
+  Kemi/Biologi, is brittle to changes in the illustrator prompt, and
+  needs separate code per new diagram class. No decision made yet — needs
+  to weigh the effort of raising accuracy against the real cost of errors
+  once this is used commercially, not just internally.
+- Also worth planning: a manual audit of a sample of generated
+  illustrations across all 4 subjects before any commercial launch —
+  specifically hunting for subtle errors, not just gross ones.
 - Per the README's stated roadmap: Google Classroom integration.
 - Only one `TODO` marker in `src/` currently (in `src/utils/jsonParse.js`,
   see above — making `planner.js`/`writer.js` equally robust against
