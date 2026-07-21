@@ -1,5 +1,6 @@
 const Anthropic = require('@anthropic-ai/sdk');
 const { Resvg } = require('@resvg/resvg-js');
+const { parseDataUrl } = require('./textbookReader');
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
@@ -165,4 +166,84 @@ function renderSVGToPNG(svgString, scale = 2.5) {
   }
 }
 
-module.exports = { generateSVG, renderSVGToPNG };
+/**
+ * Försöker tolka modellens svar som JSON även om Claude skriver en
+ * inledande eller avslutande mening runt objektet. Samma mönster som i
+ * textbookReader.js (se TODO där om att bryta ut det till en delad helper).
+ */
+function tryParseJson(rawText) {
+  const stripped = rawText.replace(/```json|```/g, '').trim();
+  try {
+    return JSON.parse(stripped);
+  } catch (e) {
+    const start = stripped.indexOf('{');
+    const end = stripped.lastIndexOf('}');
+    if (start === -1 || end === -1 || end <= start) return null;
+    try {
+      return JSON.parse(stripped.slice(start, end + 1));
+    } catch (e2) {
+      return null;
+    }
+  }
+}
+
+/**
+ * KRITIKER — låter Claude Vision granska den renderade PNG-versionen av en
+ * illustration mot scenens voice_text, och flaggar generella felmönster
+ * (linjer genom täta objekt, fel antal element, felvända pilar, orimlig
+ * skala, etiketter som inte matchar bilden) - inte enskilda ämnen.
+ * Anropas aldrig i writer.js ännu (kopplas in i ett separat steg).
+ * Fel i API-anropet eller ett svar som inte går att tolka som JSON ska
+ * aldrig blockera lektionsgenereringen - då returneras { ok: true,
+ * issue: null } så illustrationen accepteras som den är, samma
+ * fail-open-mönster som sanitizeSVG()/renderSVGToPNG().
+ */
+async function critiqueSVG(pngDataUrl, voiceText, subject) {
+  try {
+    const parsed = parseDataUrl(pngDataUrl);
+    if (!parsed) return { ok: true, issue: null };
+
+    const prompt = `You are a strict subject-matter editor at a school textbook publisher,
+reviewing an illustration for a ${subject} lesson for Swedish year 7-9 students.
+
+The illustration is meant to show exactly this explanation: ${voiceText}
+
+Look at the image and check for these general error patterns (not specific
+to any one phenomenon):
+- Do any lines/rays pass straight through opaque objects where they should
+   instead stop, reflect, or bend at the object's surface?
+- Does the number of visual elements match what the text implies (not more,
+   not fewer)?
+- Are any arrows pointing in a direction that contradicts what the text
+   describes?
+- Are the proportions/scale of the elements reasonable relative to each
+   other and to the concept being shown?
+- Do the text labels actually match the elements they are next to in the
+   image?
+
+Reply with ONLY a JSON object, no preamble, no explanation:
+{ "ok": true or false, "issue": "a short English description of the problem, written so it can be used directly as an instruction when regenerating the illustration, or null if the illustration is fine" }`;
+
+    const response = await client.messages.create({
+      model: 'claude-sonnet-4-6',
+      max_tokens: 500,
+      messages: [{
+        role: 'user',
+        content: [
+          { type: 'image', source: { type: 'base64', media_type: parsed.mediaType, data: parsed.data } },
+          { type: 'text', text: prompt }
+        ]
+      }]
+    });
+
+    const result = tryParseJson(response.content[0].text.trim());
+    if (!result || typeof result.ok !== 'boolean') return { ok: true, issue: null };
+
+    return { ok: result.ok, issue: result.ok ? null : (result.issue || null) };
+  } catch (err) {
+    console.error('Illustrator critique error:', err.message);
+    return { ok: true, issue: null };
+  }
+}
+
+module.exports = { generateSVG, renderSVGToPNG, critiqueSVG };

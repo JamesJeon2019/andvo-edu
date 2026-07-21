@@ -1,6 +1,6 @@
 const Anthropic = require('@anthropic-ai/sdk');
 const { languageInstructionsFor } = require('./level');
-const { generateSVG } = require('./illustrator');
+const { generateSVG, renderSVGToPNG, critiqueSVG } = require('./illustrator');
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
@@ -193,7 +193,7 @@ async function illustrateLesson(blocks, subject, onProgress) {
 
   for (const block of blocks) {
     for (const scene of illustrableScenesOf(block)) {
-      scene.svg_content = await generateSVGWithRetry(scene.voice_text, block.type, subject);
+      scene.svg_content = await generateSVGWithCritique(scene.voice_text, block.type, subject);
       done++;
       if (onProgress) onProgress(done, total);
     }
@@ -207,7 +207,7 @@ async function illustrateLesson(blocks, subject, onProgress) {
  */
 async function illustrateBlockScenes(block, subject) {
   for (const scene of illustrableScenesOf(block)) {
-    scene.svg_content = await generateSVGWithRetry(scene.voice_text, block.type, subject);
+    scene.svg_content = await generateSVGWithCritique(scene.voice_text, block.type, subject);
   }
 }
 
@@ -231,6 +231,49 @@ async function generateSVGWithRetry(voiceText, blockType, subject) {
     }
     console.error('Illustrator error:', err.message);
     return null;
+  }
+}
+
+/**
+ * Wrappar generateSVGWithRetry med ett Vision-kritik-steg: den genererade
+ * illustrationen renderas till PNG och granskas av critiqueSVG() mot
+ * scenens voice_text. Om kritikern flaggar ett problem görs EXAKT EN
+ * regenerering, med kritikerns issue som instruction till
+ * generateSVG() — resultatet av den regenereringen accepteras som
+ * slutgiltigt oavsett vad en förnyad kritik skulle säga, för att undvika
+ * en oändlig retry-loop (kritikern har en känd false-positive rate, precis
+ * som vilken vision-baserad granskare som helst).
+ *
+ * Om PNG-renderingen misslyckas, eller om critiqueSVG() inte hittar något
+ * problem, används den ursprungliga illustrationen direkt utan kritik.
+ * Om regenereringen kastar (t.ex. 429) eller returnerar null behålls den
+ * ursprungliga (kritiserade) illustrationen istället för att tappa scenen
+ * helt — samma fail-open-princip som resten av illustrator-pipelinen.
+ *
+ * Används bara av den automatiska bakgrundsgenereringen
+ * (illustrateLesson/illustrateBlockScenes) — INTE av lärarens manuella
+ * "Rita om"/"Ge instruktion" i /:id/block/:blockId/regenerate-svg, där
+ * automatisk kritik skulle kunna motsäga lärarens uttryckliga instruktion.
+ */
+async function generateSVGWithCritique(voiceText, blockType, subject) {
+  const svg = await generateSVGWithRetry(voiceText, blockType, subject);
+  if (!svg) return svg;
+
+  const png = renderSVGToPNG(svg);
+  if (!png) return svg;
+
+  const critique = await critiqueSVG(png, voiceText, subject);
+  if (critique.ok !== false) return svg;
+
+  console.log(`Illustrator critique flagged an issue, regenerating once: ${critique.issue}`);
+
+  try {
+    const regenerated = await generateSVG(voiceText, blockType, subject, critique.issue);
+    console.log(`Illustrator critique: regeneration ${regenerated ? 'produced a new SVG' : 'returned no usable SVG'} - using it as final regardless of any further critique`);
+    return regenerated || svg;
+  } catch (err) {
+    console.error('Illustrator critique: regeneration failed, keeping the original SVG:', err.message);
+    return svg;
   }
 }
 

@@ -110,4 +110,4 @@ Do not include any text before or after the JSON object. Do not write introducto
   return result;
 }
 
-module.exports = { extractTextbookMaterial };
+module.exports = { extractTextbookMaterial, parseDataUrl };
