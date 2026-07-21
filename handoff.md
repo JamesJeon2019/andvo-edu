@@ -1,13 +1,13 @@
 # Handoff — Andvo Edu
 
-_Last updated: 2026-07-20_
+_Last updated: 2026-07-21_
 
 ## Project status
 
 Andvo Edu is an AI-powered lesson generator for Swedish schools (Node.js +
 Express backend, Claude API for content generation, plain HTML/CSS/JS
 frontend, deployed on Render). `main` is clean and up to date with
-`origin/main` at commit `8282e60`. Lesson storage now persists in a real
+`origin/main` at commit `fb1a551`. Lesson storage now persists in a real
 Postgres database (Neon) instead of an in-memory Map — see "What was
 completed" below. Local dev server (`npm run dev`, port 3000) starts
 cleanly, runs the DB migration on boot, and `/health` responds as
@@ -227,6 +227,43 @@ and voice playback + YouTube links are supported per block.
     against a local mock server that returns 405 on HEAD and a real
     image on GET, and the timeout against a local mock server that never
     responds (correctly bounded at ~10s, not indefinite).
+- Added a render→critique loop for automatic SVG illustration generation
+  in `illustrateLesson`/`illustrateBlockScenes` (`ac053cf`): the generated
+  SVG is rendered to PNG server-side via `renderSVGToPNG` (`resvg-js`),
+  then a Vision critic (`critiqueSVG` in `src/agents/illustrator.js`)
+  checks it against the scene's `voice_text` for general error patterns —
+  rays/lines passing through opaque objects instead of reflecting or
+  stopping at the surface, element count not matching what the text
+  implies, arrow directions contradicting the text, and labels that don't
+  match what's drawn. On `ok: false`, exactly one regeneration is done via
+  `generateSVG(voiceText, blockType, subject, critique.issue)`, using the
+  critic's issue as the existing `instruction` param, and that result is
+  accepted as final regardless of what a repeat critique would say — the
+  critic has a known false-positive rate like any vision-based reviewer,
+  so it deliberately does not retry-loop. NOT applied to the teacher's
+  manual "Rita om"/"Ge instruktion" regenerate-svg route — that's a
+  human-in-the-loop flow already, where automatic critique could
+  contradict an explicit teacher instruction. Verified on a real full
+  lesson generation (Fysik, "Ljusets reflektion och brytning"): the critic
+  flagged real issues on 12 of 19 scenes (incidence/reflection angle
+  mismatches, a normal line drawn through an opaque mirror, reversed
+  arrow directions), and illustration-step generation time increased
+  ~2.2× (roughly 15-18s/scene before to ~39s/scene average blended after,
+  on this topic's high critique-trigger rate).
+- Made `checkLesson`/`checkMaterialFaithfulness` resilient to non-JSON
+  prose in the model's reply (`fb1a551`): the `tryParseJson()` helper
+  (previously local to `src/agents/textbookReader.js`) was moved to a
+  shared `src/utils/jsonParse.js`; both checker functions now call it
+  instead of a bare `JSON.parse(clean)`, with an explicit `null` check
+  that throws so the existing try/catch fallback (unchanged —
+  `status: 'ok'`, `summary: 'Faktagranskning hoppades över'` /
+  `'Källtrohetskontroll hoppades över'`) still triggers on a genuinely
+  unparseable reply. The `TODO` about this brittle pattern now lists only
+  `planner.js`/`writer.js` as remaining. Verified with a mocked Anthropic
+  SDK (no real API calls): a JSON reply wrapped in prose is now correctly
+  recovered and used instead of falling back, while a truncated/
+  unparseable reply (reproducing the real "Unterminated string in JSON"
+  incident) still falls back exactly as before.
 
 ## Next steps
 
@@ -240,19 +277,6 @@ and voice playback + YouTube links are supported per block.
   other requests in flight) now that logging has timestamps, request
   IDs, and `error.stack` (see "What was completed" above), to get a
   clean diagnosis.
-- Concrete geometry bugs spotted in AI-generated SVG illustrations: a
-  light ray rendered passing straight through an object instead of
-  reflecting off its surface at the correct point, and a spectrum
-  illustration with the wrong number/order of colors. Logged here as
-  cases to test against once a render→critique loop and/or a
-  reasoning-before-draw prompt for the illustrator agent exists (see
-  below) — not yet implemented.
-- Build out a proper render→critique loop for the SVG illustrator: render
-  the generated SVG to PNG server-side (`renderSVGToPNG` in
-  `src/agents/illustrator.js`, using `resvg-js`, already added but not
-  yet wired into the generation flow) → have Vision check the rendered
-  image against what should be depicted → regenerate on mismatch.
-  Architecture discussed, implementation not yet started.
 - Auto-assign photos of textbook pages to lecture-block scenes in
   "material" mode (instead of, or alongside, the AI-generated SVG) —
   designed but not yet implemented.
@@ -265,12 +289,12 @@ and voice playback + YouTube links are supported per block.
   version of its content side by side (rather than one replacing the
   other), with a way to switch between them per block.
 - Per the README's stated roadmap: Google Classroom integration.
-- Only one `TODO` marker in `src/` currently (in
-  `src/agents/textbookReader.js`, see above — making `planner.js`/
-  `writer.js`/`checker.js` equally robust against non-JSON prose in
-  model replies); otherwise open work isn't tracked in-code, so next
-  priorities should mostly come from the roadmap above or direct product
-  feedback.
+- Only one `TODO` marker in `src/` currently (in `src/utils/jsonParse.js`,
+  see above — making `planner.js`/`writer.js` equally robust against
+  non-JSON prose in model replies, now that `checker.js` and
+  `textbookReader.js` are already covered); otherwise open work isn't
+  tracked in-code, so next priorities should mostly come from the roadmap
+  above or direct product feedback.
 - Manually smoke test the full generation pipeline (topic → planner →
   writer → illustrator → SVG scenes) to confirm the topic-adherence and
   SVG container fixes hold up in practice.
