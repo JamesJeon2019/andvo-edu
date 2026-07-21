@@ -6,6 +6,7 @@ const { extractTextbookMaterial } = require('../agents/textbookReader');
 const { writeLesson, writeBlock, illustrateLesson, illustrateBlockScenes, countIllustrableScenes } = require('../agents/writer');
 const { checkLesson, checkMaterialFaithfulness } = require('../agents/checker');
 const { generateSVG } = require('../agents/illustrator');
+const { assignSourceImages } = require('../agents/sceneImageMatcher');
 const { searchYoutubeVideos, getCaptionTracks } = require('../agents/youtubeSearch');
 const { getLesson, saveLesson, archiveLesson, listLessons } = require('../db/lessonStore');
 const { scoped } = require('../utils/logger');
@@ -144,7 +145,7 @@ router.post('/extract-material', async (req, res) => {
  * den. Svarar direkt med ett lessonId, precis som /generate.
  */
 router.post('/generate-from-material', (req, res) => {
-  const { material, subject, level, duration, language } = req.body;
+  const { material, subject, level, duration, language, sourceImages } = req.body;
 
   if (!subject || !level) {
     return res.status(400).json({ error: 'subject och level krävs' });
@@ -163,11 +164,12 @@ router.post('/generate-from-material', (req, res) => {
     subject,
     level,
     duration: duration || 60,
-    language: language || 'sv'
+    language: language || 'sv',
+    sourceImages: sourceImages || []
   });
 });
 
-async function runGenerationFromMaterial(lessonId, { material, subject, level, duration, language }) {
+async function runGenerationFromMaterial(lessonId, { material, subject, level, duration, language, sourceImages }) {
   const log = scoped(lessonId.slice(0, 8));
   log.log(`\n📖 Genererar lektion från lärobok | ${subject} | ${level}`);
 
@@ -182,6 +184,18 @@ async function runGenerationFromMaterial(lessonId, { material, subject, level, d
     log.log('  ✍️  Writer: genererar innehåll...');
     const written = await writeLesson({ plan, level, language });
     log.log('  ✅ Innehåll klart');
+
+    // ── Steg 2.5: Matcha läroboksfoton mot lecture-scener ──
+    for (const block of written.blocks) {
+      if (block.type === 'lecture') {
+        await assignSourceImages(block, sourceImages);
+      }
+    }
+    const autoAssignedCount = written.blocks.reduce((sum, block) => {
+      const scenes = (block.content && block.content.scenes) || [];
+      return sum + scenes.filter(scene => scene.custom_image).length;
+    }, 0);
+    log.log(`  🖼  Bildmatchning: ${autoAssignedCount} scen(er) fick ett läroboksfoto som illustration`);
 
     // ── Steg 3: Illustrator (SVG per scen) ──────────
     const svgTotal = countIllustrableScenes(written.blocks);
@@ -210,6 +224,7 @@ async function runGenerationFromMaterial(lessonId, { material, subject, level, d
       check: checkResult,
       faithfulnessCheck: faithfulnessResult,
       source: 'material',
+      sourceImages,
       createdAt: new Date().toISOString()
     };
     await saveLesson(lessonId, finalLesson);

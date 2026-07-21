@@ -1245,7 +1245,8 @@ function confirmMaterialAndGenerate() {
     subject,
     level: lvl,
     language,
-    duration: 60
+    duration: 60,
+    sourceImages: materialImages.map(m => m.dataUrl)
   }, 'materialConfirm', 'materialConfirmErrBox');
 }
 
