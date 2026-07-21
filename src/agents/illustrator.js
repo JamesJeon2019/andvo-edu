@@ -77,6 +77,18 @@ ignore the rest:
    must be a visible angle/kink between the two rays, never a single straight
    line through the object. For diffuse reflection off an ordinary (non-mirror)
    surface: draw several rays spreading out from that point, not just one.
+   The reflected ray (from the reflection point to the observer/eye) must
+   never cross the object's own fill/body on its way there, even though the
+   reflection point itself is correctly on the object's outline. Before
+   picking coordinates for the light source and the eye, identify which
+   single edge/side of the object the reflection point sits on (e.g. its
+   left edge, or its top edge) - then place BOTH the light source AND the
+   eye on that same outward side of the object, never on opposite sides of
+   it. As a check: draw the straight line from the reflection point to the
+   eye's coordinates and confirm in your head that for its entire length it
+   stays outside the object's own x/y bounding box - if any part of that
+   line would fall inside the object's shape, move the eye to a position on
+   the correct outward side until it does not.
 - Kemi: fixed bond length between atoms (50-60px), bond angles must match the
    real physical values (120 degrees for sp2, 109.5 or 90 degrees for sp3) -
    never approximate by eye.
