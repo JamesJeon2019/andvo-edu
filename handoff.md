@@ -1,13 +1,13 @@
 # Handoff — Andvo Edu
 
-_Last updated: 2026-07-22_
+_Last updated: 2026-07-22 (later same day)_
 
 ## Project status
 
 Andvo Edu is an AI-powered lesson generator for Swedish schools (Node.js +
 Express backend, Claude API for content generation, plain HTML/CSS/JS
 frontend, deployed on Render). `main` is clean and up to date with
-`origin/main` at commit `6d1de67`. Lesson storage now persists in a real
+`origin/main` at commit `040ecb9`. Lesson storage now persists in a real
 Postgres database (Neon) instead of an in-memory Map — see "What was
 completed" below. Local dev server (`npm run dev`, port 3000) starts
 cleanly, runs the DB migration on boot, and `/health` responds as
@@ -296,6 +296,14 @@ and voice playback + YouTube links are supported per block.
   (no real API calls) on all three functions, both scenarios: a JSON
   reply wrapped in prose is now correctly recovered, while a genuinely
   unparseable/truncated reply still throws the same as before.
+- Lowered the `POST /api/image/validate` timeouts from 5s to 3s per
+  request (HEAD + GET-fallback) (`040ecb9`) — the old 5s+5s combination
+  meant a teacher pasting an obviously broken link could wait up to ~10s
+  before finding out. Verified with the same test set used when this
+  endpoint was first hardened (`8282e60`, see above): real image URLs
+  from multiple sources still validate in well under a second, a
+  nonexistent domain still fails fast, and a hung local mock server
+  (worst case) now bounds at ~6s instead of ~10s.
 
 ## Next steps
 
@@ -349,9 +357,10 @@ and voice playback + YouTube links are supported per block.
   caller with no per-user scoping. Needs discussion (who owns a lesson,
   what auth approach, expected load) before this goes live for multiple
   schools/teachers at once.
-- (Minor, not urgent) `POST /api/image/validate` can take up to ~10s on a
-  genuinely broken link (5s HEAD timeout + 5s GET-fallback timeout, both
-  via `AbortController`). Consider shortening the timeouts if this
+- (Minor, not urgent) `POST /api/image/validate` can still take up to
+  ~6s on a genuinely broken link (3s HEAD timeout + 3s GET-fallback
+  timeout, both via `AbortController` — lowered from 5s+5s, see "What
+  was completed" above). Consider shortening further if this still
   generates slowness complaints.
 - Render's free-tier web service spins down after 15 minutes of
   inactivity; the next request then pays a 30-60s cold-start penalty. At
