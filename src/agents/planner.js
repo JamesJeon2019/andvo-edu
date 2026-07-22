@@ -1,5 +1,6 @@
 const Anthropic = require('@anthropic-ai/sdk');
 const { languageInstructionsFor } = require('./level');
+const { tryParseJson } = require('../utils/jsonParse');
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
@@ -90,8 +91,8 @@ Rules:
   });
 
   const text = response.content[0].text.trim();
-  const clean = text.replace(/```json|```/g, '').trim();
-  const plan = JSON.parse(clean);
+  const plan = tryParseJson(text);
+  if (!plan) throw new Error('Kunde inte tolka planerarens svar som JSON');
 
   return ensureVideoBlock(plan, { topic, language });
 }
@@ -215,8 +216,8 @@ Rules:
   });
 
   const text = response.content[0].text.trim();
-  const clean = text.replace(/```json|```/g, '').trim();
-  const plan = JSON.parse(clean);
+  const plan = tryParseJson(text);
+  if (!plan) throw new Error('Kunde inte tolka planerarens svar som JSON');
 
   return { ...plan, material };
 }

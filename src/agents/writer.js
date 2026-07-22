@@ -1,6 +1,7 @@
 const Anthropic = require('@anthropic-ai/sdk');
 const { languageInstructionsFor } = require('./level');
 const { generateSVG, renderSVGToPNG, critiqueSVG } = require('./illustrator');
+const { tryParseJson } = require('../utils/jsonParse');
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
@@ -155,8 +156,8 @@ Rules:
   });
 
   const text = response.content[0].text.trim();
-  const clean = text.replace(/```json|```/g, '').trim();
-  const content = JSON.parse(clean);
+  const content = tryParseJson(text);
+  if (!content) throw new Error('Kunde inte tolka writerns svar som JSON');
 
   return { ...block, content };
 }
