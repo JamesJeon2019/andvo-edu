@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 
-const FETCH_TIMEOUT_MS = 5000;
+const FETCH_TIMEOUT_MS = 3000;
 
 // Många bildsajter (Google Images, stockfoto-sajter, de flesta CDN:er)
 // blockerar förfrågningar utan en webbläsarliknande User-Agent och svarar
