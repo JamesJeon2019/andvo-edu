@@ -331,12 +331,9 @@ and voice playback + YouTube links are supported per block.
   illustrations across all 4 subjects before any commercial launch —
   specifically hunting for subtle errors, not just gross ones.
 - Per the README's stated roadmap: Google Classroom integration.
-- Only one `TODO` marker in `src/` currently (in `src/utils/jsonParse.js`,
-  see above — making `planner.js`/`writer.js` equally robust against
-  non-JSON prose in model replies, now that `checker.js` and
-  `textbookReader.js` are already covered); otherwise open work isn't
-  tracked in-code, so next priorities should mostly come from the roadmap
-  above or direct product feedback.
+- No open `TODO` markers currently in `src/` — open work isn't tracked
+  in-code, so next priorities should mostly come from the roadmap above
+  or direct product feedback.
 - Manually smoke test the full generation pipeline (topic → planner →
   writer → illustrator → SVG scenes) to confirm the topic-adherence and
   SVG container fixes hold up in practice.
