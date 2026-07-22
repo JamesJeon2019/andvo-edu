@@ -1,13 +1,13 @@
 # Handoff — Andvo Edu
 
-_Last updated: 2026-07-21 (later same day)_
+_Last updated: 2026-07-22_
 
 ## Project status
 
 Andvo Edu is an AI-powered lesson generator for Swedish schools (Node.js +
 Express backend, Claude API for content generation, plain HTML/CSS/JS
 frontend, deployed on Render). `main` is clean and up to date with
-`origin/main` at commit `c2c5287`. Lesson storage now persists in a real
+`origin/main` at commit `6d1de67`. Lesson storage now persists in a real
 Postgres database (Neon) instead of an in-memory Map — see "What was
 completed" below. Local dev server (`npm run dev`, port 3000) starts
 cleanly, runs the DB migration on boot, and `/health` responds as
@@ -280,6 +280,22 @@ and voice playback + YouTube links are supported per block.
   actual uploaded photo as `custom_image`, task/test blocks got none.
   Cost: ~2.4s for one Vision call per lecture block (not per scene) — an
   order of magnitude cheaper than the illustrator's render→critique loop.
+- Made `planner.js`/`writer.js` JSON parsing resilient to non-JSON prose
+  in the model's reply, using the same `tryParseJson()` already used by
+  `checker.js`/`textbookReader.js` (`6d1de67`): both call sites in
+  `planner.js` (`planLesson`, `planLessonFromMaterial`) and the one in
+  `writer.js` (`writeBlock`) now call `tryParseJson()` instead of a bare
+  `JSON.parse(clean)`. Unlike the checker's graceful fallback, there's no
+  fallback to fall back to here — the plan/content IS the lesson, so on a
+  genuine parse failure (`null`) each site does an explicit `throw` that
+  surfaces exactly as before, via the existing `try`/`catch` in
+  `routes/lesson.js` (unchanged). The goal was purely to lower how often
+  that failure happens, not to add a new fallback path. The `TODO` in
+  `src/utils/jsonParse.js` about this brittle pattern is now removed —
+  all known call sites are covered. Verified with a mocked Anthropic SDK
+  (no real API calls) on all three functions, both scenarios: a JSON
+  reply wrapped in prose is now correctly recovered, while a genuinely
+  unparseable/truncated reply still throws the same as before.
 
 ## Next steps
 
@@ -340,3 +356,13 @@ and voice playback + YouTube links are supported per block.
   genuinely broken link (5s HEAD timeout + 5s GET-fallback timeout, both
   via `AbortController`). Consider shortening the timeouts if this
   generates slowness complaints.
+- Render's free-tier web service spins down after 15 minutes of
+  inactivity; the next request then pays a 30-60s cold-start penalty. At
+  real usage — teachers hitting the site from different devices at
+  different times of day — this will look like "the site is down", not
+  "the site is slow". Deliberately deferred: real school usage doesn't
+  start until 2026-08-10, so there's time. Recommendation for later:
+  upgrade to Render's paid Starter tier (~$7/month), which removes the
+  spin-down entirely. Do NOT paper over this with an external keep-alive
+  ping in the meantime — that doesn't avoid the problem, it just burns
+  through the free tier's 750 hours/month workspace-wide limit faster.
