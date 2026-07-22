@@ -1,6 +1,7 @@
 const Anthropic = require('@anthropic-ai/sdk');
 const { Resvg } = require('@resvg/resvg-js');
 const { parseDataUrl } = require('./textbookReader');
+const { tryParseJson } = require('../utils/jsonParse');
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
@@ -163,27 +164,6 @@ function renderSVGToPNG(svgString, scale = 2.5) {
     return `data:image/png;base64,${pngBuffer.toString('base64')}`;
   } catch {
     return null;
-  }
-}
-
-/**
- * Försöker tolka modellens svar som JSON även om Claude skriver en
- * inledande eller avslutande mening runt objektet. Samma mönster som i
- * textbookReader.js (se TODO där om att bryta ut det till en delad helper).
- */
-function tryParseJson(rawText) {
-  const stripped = rawText.replace(/```json|```/g, '').trim();
-  try {
-    return JSON.parse(stripped);
-  } catch (e) {
-    const start = stripped.indexOf('{');
-    const end = stripped.lastIndexOf('}');
-    if (start === -1 || end === -1 || end <= start) return null;
-    try {
-      return JSON.parse(stripped.slice(start, end + 1));
-    } catch (e2) {
-      return null;
-    }
   }
 }
 
