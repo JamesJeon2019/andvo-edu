@@ -304,6 +304,21 @@ and voice playback + YouTube links are supported per block.
   from multiple sources still validate in well under a second, a
   nonexistent domain still fails fast, and a hung local mock server
   (worst case) now bounds at ~6s instead of ~10s.
+- Created `scripts/illustration-audit.js`, syntax-checked (`node
+  --check`) — a one-off illustration quality audit script, not a
+  feature of the app. Generates 8 test lessons (2 topics × 4 subjects:
+  Kemi, Biologi, Fysik, Matematik) directly through
+  `planLesson`→`writeLesson`→`illustrateLesson`, no HTTP, no DB writes.
+  Collects every scene's `svg_content` into
+  `scripts/illustration-audit-output.html`, grouped by subject then
+  topic, each illustration shown with its block type and `voice_text`.
+  Per-topic error handling — a failed topic is logged and shown as an
+  error in the output instead of stopping the other 7. DELIBERATELY NOT
+  in git (untracked) — exists only locally on the user's machine. Run
+  with `node scripts/illustration-audit.js` (needs `.env` with
+  `ANTHROPIC_API_KEY`). Not yet run — deferred to a separate session, since
+  it takes an hour or two of real time plus a noticeable API budget, and
+  the machine needs to stay on for the whole run.
 
 ## Next steps
 
@@ -335,9 +350,11 @@ and voice playback + YouTube links are supported per block.
   needs separate code per new diagram class. No decision made yet — needs
   to weigh the effort of raising accuracy against the real cost of errors
   once this is used commercially, not just internally.
-- Also worth planning: a manual audit of a sample of generated
-  illustrations across all 4 subjects before any commercial launch —
-  specifically hunting for subtle errors, not just gross ones.
+- Run `node scripts/illustration-audit.js` (file exists locally, not in
+  git — if the script is missing on the current machine, ask Claude to
+  recreate it from the description above), review
+  `illustration-audit-output.html`, and send screenshots of any
+  suspicious illustrations for review.
 - Per the README's stated roadmap: Google Classroom integration.
 - No open `TODO` markers currently in `src/` — open work isn't tracked
   in-code, so next priorities should mostly come from the roadmap above
