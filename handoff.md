@@ -1,13 +1,13 @@
 # Handoff — Andvo Edu
 
-_Last updated: 2026-07-22 (later same day)_
+_Last updated: 2026-07-23_
 
 ## Project status
 
 Andvo Edu is an AI-powered lesson generator for Swedish schools (Node.js +
 Express backend, Claude API for content generation, plain HTML/CSS/JS
 frontend, deployed on Render). `main` is clean and up to date with
-`origin/main` at commit `040ecb9`. Lesson storage now persists in a real
+`origin/main` at commit `d1b2f84`. Lesson storage now persists in a real
 Postgres database (Neon) instead of an in-memory Map — see "What was
 completed" below. Local dev server (`npm run dev`, port 3000) starts
 cleanly, runs the DB migration on boot, and `/health` responds as
@@ -319,9 +319,28 @@ and voice playback + YouTube links are supported per block.
   `ANTHROPIC_API_KEY`). Not yet run — deferred to a separate session, since
   it takes an hour or two of real time plus a noticeable API budget, and
   the machine needs to stay on for the whole run.
+- Removed the automatic `history.pushState` on normal lesson open/
+  generation (`d1b2f84`): `renderEditor()` no longer changes the URL by
+  itself. Previously this made a browser refresh silently "remember" the
+  last-opened lesson instead of resetting to the start screen, which read
+  as a bug — now a refresh always returns to the start screen. Added an
+  explicit "🔗 Kopiera länk" button on the finished-lesson screen, next to
+  "📁 Arkivera" — on click it builds a `?lesson=<id>` link and copies it to
+  the clipboard, without changing the visible address bar. The direct-link
+  logic (`?lesson=<id>` on page load, `popstate`) was left untouched and
+  still works exactly as before. Also fixed a stale `confirm()` string in
+  `backToSetup()` ("Lektionen sparas inte permanent än" — no longer true,
+  lessons have persisted to the DB for a while now).
 
 ## Next steps
 
+- Render Auto-Deploy ("On Commit") did not trigger on its own for ~2
+  weeks (2026-07-17 through 2026-07-22 inclusive) despite a dozen+ pushes
+  to `main` — a Manual Deploy had to be run by hand each time. Root cause
+  not investigated (possibly a dropped GitHub webhook between Render and
+  the repo). Check whether auto-deploy fires on its own for the next push
+  (`d1b2f84`) — if it still doesn't, investigate the Render↔GitHub webhook
+  integration directly instead of continuing to rely on manual deploys.
 - Resolved / false alarm: the previously-logged "Kunde inte läsa av
   läroboksfotona, försök igen" report (the `/extract-material` failure
   path) was investigated further. The real cause turned out to be an
