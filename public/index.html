@@ -337,6 +337,7 @@
     <div style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap;">
       <button class="hbtn" onclick="backToSetup()">← Ny lektion</button>
       <button class="hbtn" id="archiveBtn" onclick="archiveCurrentLesson()">📁 Arkivera</button>
+      <button class="hbtn" id="copyLinkBtn" onclick="copyLessonLink()">🔗 Kopiera länk</button>
       <button class="hbtn pr" onclick="alert('Elevvy kommer snart!')">👁 Elevvy →</button>
     </div>
   </div>
@@ -381,6 +382,16 @@ function clearLessonUrlParam() {
   if (!url.searchParams.has('lesson')) return;
   url.searchParams.delete('lesson');
   history.pushState({}, '', url.pathname + url.search);
+}
+
+function copyLessonLink() {
+  const url = `${location.origin}${location.pathname}?lesson=${lessonId}`;
+  navigator.clipboard.writeText(url);
+  const btn = document.getElementById('copyLinkBtn');
+  if (!btn) return;
+  const original = btn.textContent;
+  btn.textContent = '✅ Kopierad!';
+  setTimeout(() => { btn.textContent = original; }, 2000);
 }
 
 /**
@@ -1342,7 +1353,6 @@ function updateLoadingSteps(data) {
 
 function renderEditor() {
   showScreen('editor');
-  setLessonUrlParam(lessonId);
 
   document.getElementById('edTitle').textContent = lesson.title;
   updateEditorHeaderStatus();
@@ -1722,7 +1732,7 @@ async function rewriteBlock(idx) {
 }
 
 function backToSetup() {
-  if (!confirm('Gå tillbaka? Lektionen sparas inte permanent än.')) return;
+  if (!confirm('Gå tillbaka till startsidan?')) return;
   stopSpeech();
   showScreen('setup');
   clearLessonUrlParam();
