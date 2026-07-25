@@ -331,16 +331,16 @@ and voice playback + YouTube links are supported per block.
   still works exactly as before. Also fixed a stale `confirm()` string in
   `backToSetup()` ("Lektionen sparas inte permanent än" — no longer true,
   lessons have persisted to the DB for a while now).
+- Починен автодеплой Render — оказалось, GitHub App от Render не имел
+  доступа к репозиторию andvo-edu вообще (только к отдельному
+  andvo-backend), поэтому события о пушах не долетали с 17 июля до 25
+  июля включительно, несмотря на то, что Auto-Deploy был включён ("On
+  Commit"). Исправлено через github.com/settings/installations → Render
+  → добавлен доступ к andvo-edu. Подтверждено тестовым пустым коммитом —
+  автодеплой снова срабатывает сам.
 
 ## Next steps
 
-- Render Auto-Deploy ("On Commit") did not trigger on its own for ~2
-  weeks (2026-07-17 through 2026-07-22 inclusive) despite a dozen+ pushes
-  to `main` — a Manual Deploy had to be run by hand each time. Root cause
-  not investigated (possibly a dropped GitHub webhook between Render and
-  the repo). Check whether auto-deploy fires on its own for the next push
-  (`d1b2f84`) — if it still doesn't, investigate the Render↔GitHub webhook
-  integration directly instead of continuing to rely on manual deploys.
 - Resolved / false alarm: the previously-logged "Kunde inte läsa av
   läroboksfotona, försök igen" report (the `/extract-material` failure
   path) was investigated further. The real cause turned out to be an
