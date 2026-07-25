@@ -369,11 +369,16 @@ and voice playback + YouTube links are supported per block.
   needs separate code per new diagram class. No decision made yet — needs
   to weigh the effort of raising accuracy against the real cost of errors
   once this is used commercially, not just internally.
-- Run `node scripts/illustration-audit.js` (file exists locally, not in
-  git — if the script is missing on the current machine, ask Claude to
-  recreate it from the description above), review
-  `illustration-audit-output.html`, and send screenshots of any
-  suspicious illustrations for review.
+- Первая попытка запуска `node scripts/illustration-audit.js` (25 июля)
+  была прервана на середине (2 из 8 тем обработано — Fysik первая тема,
+  Biologi "Fotosyntes") из-за непреднамеренного завершения фонового
+  процесса, причина не установлена (не настройки энергосбережения — они
+  были в порядке). Результат того прогона потерян (скрипт тогда писал
+  HTML только в самом конце). Скрипт доработан — теперь
+  `illustration-audit-output.html` перезаписывается после КАЖДОЙ
+  обработанной темы, а не только в конце, так что повторный обрыв больше
+  не уничтожит весь накопленный результат. Готов к повторному запуску
+  (`node scripts/illustration-audit.js`), пока отложено на другое время.
 - Per the README's stated roadmap: Google Classroom integration.
 - No open `TODO` markers currently in `src/` — open work isn't tracked
   in-code, so next priorities should mostly come from the roadmap above
