@@ -1,6 +1,6 @@
 # Handoff — Andvo Edu
 
-_Last updated: 2026-07-23_
+_Last updated: 2026-07-26_
 
 ## Project status
 
@@ -347,10 +347,22 @@ and voice playback + YouTube links are supported per block.
   exhausted Anthropic API balance and/or several generations running
   concurrently at the time, not a bug in the code — closing this out, no
   code fix needed.
-- Investigate a user report of comprehension/interpretation errors in
-  lessons generated via "Från lärobok" (the writer misunderstanding the
-  text or a phenomenon it describes). Not yet started — need concrete
-  screenshots from the user to diagnose before any fix can be scoped.
+- Auto-assign фото учебника к сценам (`assignSourceImages` в
+  `src/agents/sceneImageMatcher.js`) технически работает и подтверждён на
+  синтетическом тесте (см. "What was completed" выше), НО пользователь
+  сообщает, что в реальном использовании (реальные фото страниц
+  учебника) он никогда не видел, чтобы фото подставилось вместо AI SVG —
+  всегда генерируется SVG. Вероятная причина — не баг, а следствие
+  намеренно строгого критерия совпадения (фото засчитывается только если
+  показывает ТУ ЖЕ диаграмму, не просто тот же параграф) — реальные
+  страницы учебника чаще всего текстовые, без чистой отдельной диаграммы,
+  однозначно соответствующей конкретной сцене. Требуется диагностика: в
+  следующий раз при генерации реального урока в material-режиме
+  проверить лог-строку "🖼  Bildmatchning: X scen(er) fick ett
+  läroboksfoto som illustration" (`src/routes/lesson.js`) — если
+  стабильно 0, подтверждает гипотезу, и тогда нужно решить, ослаблять ли
+  критерий совпадения (риск ложных подстановок) или оставить как есть.
+  Отложено, займёмся позже.
 - Open, unresolved strategic question: is illustration quality/accuracy
   good enough to actually sell this to teachers outside internal use
   (where soft bugs are tolerable and feedback is direct/personal)?
@@ -398,6 +410,19 @@ and voice playback + YouTube links are supported per block.
   caller with no per-user scoping. Needs discussion (who owns a lesson,
   what auth approach, expected load) before this goes live for multiple
   schools/teachers at once.
+- Решение принято (реализация не начата): НЕ использовать Google
+  OAuth/Classroom для авторизации сейчас — Google Classroom в Швеции
+  завязан на Skolverket, это отдельный, гораздо более глобальный уровень
+  интеграции, не относящийся к текущей цели (продажа отдельным школам
+  как самостоятельный инструмент между учителями внутри школы, не
+  национальная инфраструктура). Вместо этого: простая модель "school" —
+  таблица `schools` в БД (название, логин, хеш пароля), уроки привязаны к
+  `school_id` (не к отдельному учителю — все учителя одной школы видят
+  уроки друг друга, изоляция только между разными школами), простой
+  экран входа/сессия, защита роутов по `school_id`. Google Classroom
+  интеграция отложена как отдельная, возможно нереализуемая для
+  отдельных школ тема — не блокирует и не влияет на текущую архитектуру.
+  Не начато реализовывать.
 - (Minor, not urgent) `POST /api/image/validate` can still take up to
   ~6s on a genuinely broken link (3s HEAD timeout + 3s GET-fallback
   timeout, both via `AbortController` — lowered from 5s+5s, see "What
@@ -408,8 +433,12 @@ and voice playback + YouTube links are supported per block.
   real usage — teachers hitting the site from different devices at
   different times of day — this will look like "the site is down", not
   "the site is slow". Deliberately deferred: real school usage doesn't
-  start until 2026-08-10, so there's time. Recommendation for later:
-  upgrade to Render's paid Starter tier (~$7/month), which removes the
-  spin-down entirely. Do NOT paper over this with an external keep-alive
-  ping in the meantime — that doesn't avoid the problem, it just burns
-  through the free tier's 750 hours/month workspace-wide limit faster.
+  start until 2026-08-10, so there's time. Decision (already made, no
+  code/infra change yet): upgrade to Render's paid Starter tier (~$7/
+  month), which removes the spin-down entirely — this is settled, not
+  just a recommendation, but no specific date/moment has been chosen for
+  when to actually click the upgrade in Render's dashboard; just needs
+  doing before 2026-08-10. Do NOT paper over this with an external
+  keep-alive ping in the meantime — that doesn't avoid the problem, it
+  just burns through the free tier's 750 hours/month workspace-wide limit
+  faster.
