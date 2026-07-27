@@ -83,4 +83,69 @@ Do not include any text before or after the JSON object. Do not write introducto
   return result;
 }
 
-module.exports = { extractTextbookMaterial, parseDataUrl };
+/**
+ * DIAGRAMDETEKTOR — hittar enskilda läromedelsdiagram/scheman på fotona
+ * (grafer, strukturformler, anatomiska scheman, processdiagram etc, INTE
+ * vanlig text, texttabeller eller dekorativa foton) och förklarar deras
+ * innehåll i ord. Första byggstenen för att i ett senare steg "grunda"
+ * material-lägets illustrationer i de verkliga diagrammen i stället för
+ * att gissa utifrån text i efterhand. Ett fristående, valfritt steg — ett
+ * misslyckande här ska aldrig stoppa extractTextbookMaterial.
+ */
+async function detectDiagrams(images, language = 'sv') {
+  const parsed = (Array.isArray(images) ? images : []).map(parseDataUrl).filter(Boolean);
+  if (parsed.length === 0) {
+    return { diagrams: [] };
+  }
+
+  const langName = language === 'en' ? 'English' : 'Swedish';
+
+  const content = [
+    ...parsed.map(img => ({
+      type: 'image',
+      source: { type: 'base64', media_type: img.mediaType, data: img.data }
+    })),
+    {
+      type: 'text',
+      text: `These are photos of textbook pages, in reading order (index 0, 1, 2, ...).
+
+Find any individual educational diagrams, charts or schematic illustrations on these pages — graphs, structural formulas, anatomical diagrams, process diagrams and similar. Do NOT count plain body text, tables of text, or decorative photos without an educational/explanatory purpose as diagrams.
+
+For each diagram you find:
+1. Give it a short label.
+2. Explain its content in words, in ${langName}. You may use any caption or nearby text on the photo to make the explanation more accurate.
+3. Give its location on that specific image as FRACTIONS of that image's own width/height (0.0-1.0 for left/top/width/height), NOT absolute pixels — the coordinates must be independent of the photo's actual resolution.
+
+Return ONLY JSON, no markdown:
+{
+  "diagrams": [
+    {
+      "imageIndex": 0,
+      "label": "short diagram name",
+      "explanation": "detailed explanation of the diagram's content, in words",
+      "bbox": { "left": 0.1, "top": 0.2, "width": 0.4, "height": 0.3 }
+    }
+  ]
+}
+
+If the pages contain no diagrams at all (text only), return { "diagrams": [] } — that is a normal, valid result, not an error.
+
+Do not include any text before or after the JSON object. Do not write introductory phrases like "Here is...". Your entire reply must be valid JSON, starting with { and ending with }.`
+    }
+  ];
+
+  const response = await client.messages.create({
+    model: 'claude-sonnet-4-6',
+    max_tokens: 2000,
+    messages: [{ role: 'user', content }]
+  });
+
+  const result = tryParseJson(response.content[0].text.trim());
+  if (!result || !Array.isArray(result.diagrams)) {
+    return { diagrams: [] };
+  }
+
+  return result;
+}
+
+module.exports = { extractTextbookMaterial, detectDiagrams, parseDataUrl };
