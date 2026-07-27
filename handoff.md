@@ -1,6 +1,6 @@
 # Handoff — Andvo Edu
 
-_Last updated: 2026-07-26_
+_Last updated: 2026-07-27_
 
 ## Project status
 
@@ -347,40 +347,59 @@ and voice playback + YouTube links are supported per block.
   exhausted Anthropic API balance and/or several generations running
   concurrently at the time, not a bug in the code — closing this out, no
   code fix needed.
-- Auto-assign фото учебника к сценам (`assignSourceImages` в
-  `src/agents/sceneImageMatcher.js`) технически работает и подтверждён на
-  синтетическом тесте (см. "What was completed" выше), НО пользователь
-  сообщает, что в реальном использовании (реальные фото страниц
-  учебника) он никогда не видел, чтобы фото подставилось вместо AI SVG —
-  всегда генерируется SVG. Вероятная причина — не баг, а следствие
-  намеренно строгого критерия совпадения (фото засчитывается только если
-  показывает ТУ ЖЕ диаграмму, не просто тот же параграф) — реальные
-  страницы учебника чаще всего текстовые, без чистой отдельной диаграммы,
-  однозначно соответствующей конкретной сцене. Требуется диагностика: в
-  следующий раз при генерации реального урока в material-режиме
-  проверить лог-строку "🖼  Bildmatchning: X scen(er) fick ett
-  läroboksfoto som illustration" (`src/routes/lesson.js`) — если
-  стабильно 0, подтверждает гипотезу, и тогда нужно решить, ослаблять ли
-  критерий совпадения (риск ложных подстановок) или оставить как есть.
-  Отложено, займёмся позже.
-- Open, unresolved strategic question: is illustration quality/accuracy
-  good enough to actually sell this to teachers outside internal use
-  (where soft bugs are tolerable and feedback is direct/personal)?
-  Concrete example: subtle geometric inaccuracies — e.g. a "topp"/peak
-  label on a wave graph offset by a few pixels from the curve's actual
-  peak — are a different class of error than gross conceptual ones (a ray
-  passing straight through an object), and the existing Vision critic
-  (render→critique loop, see "What was completed" above) is bad at
-  catching exactly this kind of subtlety, because it visually looks
-  almost fine even to a Vision model. Discussed an alternative: a
-  programmatic (non-Vision) geometric check for parameterizable shapes
-  (sine waves, function graphs — parse coordinates out of the SVG path
-  and compare against mathematically expected points) — but this only
-  applies narrowly (mainly Matematik/Fysik), doesn't scale to
-  Kemi/Biologi, is brittle to changes in the illustrator prompt, and
-  needs separate code per new diagram class. No decision made yet — needs
-  to weigh the effort of raising accuracy against the real cost of errors
-  once this is used commercially, not just internally.
+- ПЕРЕСМОТРЕН план для material-режима (заменяет предыдущую диагностику
+  `assignSourceImages`/`sceneImageMatcher.js`): текущий подход "текст →
+  искать подходящее фото постфактум" на практике ни разу не сработал —
+  пользователь подтверждает, что за всё время использования ни одна
+  сцена ни разу не получила реальное фото учебника как иллюстрацию,
+  всегда только AI SVG. Новый план переворачивает порядок причины и
+  следствия: Vision должен СНАЧАЛА разобрать загруженные фото учебника и
+  объяснить содержание диаграмм своими словами (может опираться на
+  буквальный текст учебника рядом с диаграммой), и только ПОТОМ на основе
+  этого понимания писать текст сцены (`voice_text`) и/или иллюстрацию.
+  Дополнительно: одно фото страницы часто содержит несколько отдельных
+  диаграмм, поэтому Vision должен вернуть не только объяснение, но и
+  bounding box каждой найденной диаграммы на изображении, чтобы сервер
+  мог вырезать (crop) именно нужный кусок фото — не всю страницу целиком —
+  для показа как иллюстрации конкретной сцены. Координаты от Vision не
+  всегда точны (та же природа неточности, что уже наблюдалась с
+  геометрией — см. закрытый стратегический вопрос про точность
+  иллюстраций ниже), поэтому при вырезании нужен небольшой padding вокруг
+  заявленной области, чтобы не обрезать диаграмму по краю при небольшой
+  погрешности координат. Итоговая логика по каждой сцене с обнаруженной
+  диаграммой: (1) вырезанный (не вся страница) кусок реального фото
+  показывается как источник/доказательство, сопровождаемый словесным
+  объяснением содержания диаграммы; (2) AI SVG-иллюстрация рисуется
+  заземлённой на ту же диаграмму (иллюстратор получает и вырезанное фото,
+  и словесное объяснение) — как дополнение, упрощающее/переформулирующее
+  её понятнее для ученика, а не замена; (3) единый визуальный стиль по
+  всему уроку обеспечивается тем, что AI SVG генерируется всегда. Первый
+  шаг перед полной переделкой — диагностика: проверить лог "🖼
+  Bildmatchning" на реальном material-режиме для формального подтверждения
+  через код/логи (хотя пользовательский опыт уже подтверждает 0%
+  срабатываний). После этого — переделка пайплайна `extract-material` →
+  `planLessonFromMaterial` → `writeLesson` → illustrator, плюс новый шаг
+  вырезания диаграмм из фото (вероятно через `sharp`, уже используется в
+  проекте похожим образом). Заметно больший объём работы, чем текущий
+  `sceneImageMatcher.js` — сопоставимо с прошлыми крупными переделками
+  пайплайна.
+- Closed strategic question: is illustration quality/accuracy good enough
+  to actually sell this to teachers outside internal use? Decision made
+  after a manual audit of 8 lessons (153 illustrations total) — the
+  current quality level is accepted as sufficient for this version. Known
+  gaps are deliberately NOT being chased further right now, e.g. subtle
+  geometric inaccuracies (a "topp"/peak label on a wave graph offset by a
+  few pixels from the curve's actual peak — a different class of error
+  than gross conceptual ones like a ray passing straight through an
+  object, and one the existing Vision critic, see render→critique loop
+  under "What was completed" above, is bad at catching because it looks
+  almost fine even to a Vision model). A programmatic (non-Vision)
+  geometric check was discussed as an alternative but rejected for now —
+  it would only apply narrowly (mainly Matematik/Fysik), doesn't scale to
+  Kemi/Biologi, is brittle to changes in the illustrator prompt, and needs
+  separate code per new diagram class. Waiting instead on future
+  underlying-model quality improvements rather than investing more effort
+  here now.
 - Первая попытка запуска `node scripts/illustration-audit.js` (25 июля)
   была прервана на середине (2 из 8 тем обработано — Fysik первая тема,
   Biologi "Fotosyntes") из-за непреднамеренного завершения фонового
@@ -392,12 +411,6 @@ and voice playback + YouTube links are supported per block.
   не уничтожит весь накопленный результат. Готов к повторному запуску
   (`node scripts/illustration-audit.js`), пока отложено на другое время.
 - Per the README's stated roadmap: Google Classroom integration.
-- No open `TODO` markers currently in `src/` — open work isn't tracked
-  in-code, so next priorities should mostly come from the roadmap above
-  or direct product feedback.
-- Manually smoke test the full generation pipeline (topic → planner →
-  writer → illustrator → SVG scenes) to confirm the topic-adherence and
-  SVG container fixes hold up in practice.
 - General pattern worth keeping in mind for future UI work: any
   toggled/collapsible control that gets revealed near the top of the page
   (like the scene "Klistra in länk" row) can end up hidden under the
