@@ -417,6 +417,10 @@ async function openLessonById(id) {
     lessonId = id;
     lessonStatus = row ? row.status : 'draft';
     renderEditor();
+    // Rensar ?lesson= från URL:en så en efterföljande sidladdning inte
+    // öppnar samma lektion igen — annars ser det ut som att sidan
+    // "inte uppdateras" för den som öppnat en delad länk.
+    clearLessonUrlParam();
   } catch (e) {
     showScreen('setup');
     clearLessonUrlParam();
