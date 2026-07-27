@@ -1,4 +1,5 @@
 const Anthropic = require('@anthropic-ai/sdk');
+const sharp = require('sharp');
 const { tryParseJson } = require('../utils/jsonParse');
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
@@ -148,4 +149,57 @@ Do not include any text before or after the JSON object. Do not write introducto
   return result;
 }
 
-module.exports = { extractTextbookMaterial, detectDiagrams, parseDataUrl };
+/**
+ * DIAGRAMBESKÄRARE — skär ut den del av ett fotograferat läroboksuppslag
+ * som en diagrams `bbox` (från detectDiagrams, fractions 0.0-1.0 relative
+ * to the EXIF-rotated image) pekar ut, med lite padding runt om. Ett foto
+ * taget i stående läge har ofta EXIF-orientering satt i stället för att
+ * pixeldatan faktiskt är roterad — `.rotate()` (utan argument) läser av
+ * den taggen och roterar på riktigt. `sharp`'s `.metadata()` rapporterar
+ * alltid filens råa, opåverkade mått, så den kan INTE användas för att
+ * få fram bredd/höjd efter rotation. Därför två pass: första passet kör
+ * `.rotate().toBuffer({ resolveWithObject: true })`, vars `info.width`/
+ * `info.height` är de faktiska måtten efter rotation; andra passet skapar
+ * en ny `sharp`-instans av den redan roterade bufferten och gör
+ * `.extract()` på den, med pixelkoordinater uträknade från just de måtten.
+ */
+async function cropDiagram(dataUrl, bbox, paddingFraction = 0.05) {
+  try {
+    const parsed = parseDataUrl(dataUrl);
+    if (!parsed || !bbox) return null;
+
+    const sourceBuffer = Buffer.from(parsed.data, 'base64');
+
+    const { data: rotatedBuffer, info } = await sharp(sourceBuffer)
+      .rotate()
+      .toBuffer({ resolveWithObject: true });
+
+    const padX = bbox.width * paddingFraction;
+    const padY = bbox.height * paddingFraction;
+
+    const leftFrac = bbox.left - padX;
+    const topFrac = bbox.top - padY;
+    const widthFrac = bbox.width + 2 * padX;
+    const heightFrac = bbox.height + 2 * padY;
+
+    const left = Math.max(0, Math.round(leftFrac * info.width));
+    const top = Math.max(0, Math.round(topFrac * info.height));
+    const right = Math.min(info.width, Math.round((leftFrac + widthFrac) * info.width));
+    const bottom = Math.min(info.height, Math.round((topFrac + heightFrac) * info.height));
+
+    const width = right - left;
+    const height = bottom - top;
+    if (width <= 0 || height <= 0) return null;
+
+    const croppedBuffer = await sharp(rotatedBuffer)
+      .extract({ left, top, width, height })
+      .jpeg({ quality: 85 })
+      .toBuffer();
+
+    return `data:image/jpeg;base64,${croppedBuffer.toString('base64')}`;
+  } catch (e) {
+    return null;
+  }
+}
+
+module.exports = { extractTextbookMaterial, detectDiagrams, cropDiagram, parseDataUrl };

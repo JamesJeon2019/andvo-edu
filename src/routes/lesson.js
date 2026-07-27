@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { v4: uuidv4 } = require('uuid');
 const { planLesson, planLessonFromMaterial } = require('../agents/planner');
-const { extractTextbookMaterial } = require('../agents/textbookReader');
+const { extractTextbookMaterial, detectDiagrams } = require('../agents/textbookReader');
 const { writeLesson, writeBlock, illustrateLesson, illustrateBlockScenes, countIllustrableScenes } = require('../agents/writer');
 const { checkLesson, checkMaterialFaithfulness } = require('../agents/checker');
 const { generateSVG } = require('../agents/illustrator');
@@ -178,6 +178,15 @@ async function runGenerationFromMaterial(lessonId, { material, subject, level, d
     log.log('  🗓  Planner: skapar plan från material...');
     const plan = await planLessonFromMaterial({ material, subject, level, duration, language });
     log.log(`  ✅ Plan klar: ${plan.blocks.length} block`);
+
+    // ── Steg 1.5: Hitta diagram i läroboksfotona ────
+    if (sourceImages && sourceImages.length > 0) {
+      const diagramResult = await detectDiagrams(sourceImages, language);
+      plan.diagrams = diagramResult.diagrams;
+    } else {
+      plan.diagrams = [];
+    }
+    log.log(`  📊 Diagramdetektering: ${plan.diagrams.length} diagram hittade`);
 
     // ── Steg 2: Writer (text) ───────────────────────
     setProgress(lessonId, { step: 'content' });

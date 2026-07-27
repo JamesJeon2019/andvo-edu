@@ -41,6 +41,18 @@ function sourceInstructionsFor(lessonContext) {
 }
 
 /**
+ * Kontext om diagram som hittats i lärarens uppladdade läroboksfoton (se
+ * detectDiagrams i textbookReader.js), för att grunda lecture-scener i
+ * dem när innehållet matchar — bara label + explanation, INTE bbox (den
+ * är bara relevant för framtida bildbeskärning, inte för writer-modellen).
+ * Endast använd av lecture-block; task/test-block nämner aldrig diagram.
+ */
+function diagramsInstructionsFor(diagrams) {
+  const list = diagrams.map((d, i) => `${i}. ${d.label} — ${d.explanation}`).join('\n');
+  return `\nDIAGRAMS FOUND IN THE TEACHER'S UPLOADED TEXTBOOK PHOTOS (for reference — these are real diagrams that exist in the source material):\n${list}\n\nIf a scene's content matches one of these diagrams, write its voice_text so it is consistent with (does not contradict) that diagram's actual content, and include "diagramIndex": <number> (0-based, matching the list above) in that scene's JSON. For scenes not related to any diagram, do NOT include this field at all — do not write null, just omit the field.\n`;
+}
+
+/**
  * Genererar innehåll för ett enskilt lektionsblock. Fungerar likadant oavsett
  * ämne — prompten tar bara emot ämnet som en variabel, ingen ämnesspecifik logik.
  */
@@ -52,6 +64,23 @@ async function writeBlock({ block, lessonContext, level, language }) {
   let prompt = '';
 
   if (block.type === 'lecture') {
+    const diagrams = Array.isArray(lessonContext.diagrams) ? lessonContext.diagrams : [];
+    const hasDiagrams = diagrams.length > 0;
+    const diagramsBlock = hasDiagrams ? diagramsInstructionsFor(diagrams) : '';
+    const sceneSchema = hasDiagrams
+      ? `    {
+      "voice_text": "the scene's text in the lesson language — this is exactly what is both shown on screen and spoken aloud",
+      "emphasis": false,
+      "diagramIndex": 0
+    }`
+      : `    {
+      "voice_text": "the scene's text in the lesson language — this is exactly what is both shown on screen and spoken aloud",
+      "emphasis": false
+    }`;
+    const diagramIndexRule = hasDiagrams
+      ? '\n- "diagramIndex" is optional, only if applicable — include it only on a scene whose content matches one of the diagrams listed above, and omit it entirely on every other scene (never write null).'
+      : '';
+
     prompt = `You are a ${lessonContext.subject} teacher. Write the lecture content as a series of "scenes" — like a video presentation, where each scene is narrated aloud.
 
 Lesson: ${lessonContext.title}
@@ -62,15 +91,13 @@ Language: ${language}
 
 ${langInstr}
 ${materialBlock}
+${diagramsBlock}
 ${VOICE_STYLE_INSTR}
 
 Return ONLY JSON:
 {
   "scenes": [
-    {
-      "voice_text": "the scene's text in the lesson language — this is exactly what is both shown on screen and spoken aloud",
-      "emphasis": false
-    }
+${sceneSchema}
   ]
 }
 
@@ -79,7 +106,7 @@ Rules:
 - First scene is a short "hook", 1 sentence to grab attention (emphasis: false)
 - Exactly one scene is the block's main idea, mark it "emphasis": true
 - The rest are explanation scenes. ${SCENE_LEN_RULE}
-- ${strictnessRule}`;
+- ${strictnessRule}${diagramIndexRule}`;
 
   } else if (block.type === 'task') {
     prompt = `You are a ${lessonContext.subject} teacher. Write a lesson task as narrated scenes.
