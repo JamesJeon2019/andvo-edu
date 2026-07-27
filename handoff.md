@@ -358,6 +358,16 @@ and voice playback + YouTube links are supported per block.
   `.rotate()` без аргументов, если вызвать перед `.extract()`) — иначе
   вырезание попадёт не в ту область на любом фото, снятом в portrait-
   ориентации (то есть на большинстве обычных телефонных фото документов).
+- `cropDiagram(dataUrl, bbox, paddingFraction)` добавлена в
+  `src/agents/textbookReader.js` — вырезает область диаграммы из фото
+  учебника с учётом EXIF-поворота (двухпроходная логика: сначала реально
+  выполнить поворот через `.rotate().toBuffer({resolveWithObject:true})`,
+  получить настоящие `info.width`/`info.height`, только потом делать
+  `extract` из уже повёрнутого буфера). Установлена зависимость `sharp`.
+  Проверено на реальном фото (диаграмма периодической таблицы) — размеры
+  действительно поменялись местами после поворота (4032×3024 landscape →
+  3024×4032 portrait), итоговый crop визуально корректен. Второй шаг
+  плана переработки material-режима (после `detectDiagrams`).
 - Прокинуты найденные диаграммы через `planLessonFromMaterial` →
   `writeBlock` (шаг 3 плана переработки material-режима, после
   `detectDiagrams` и `cropDiagram`): `runGenerationFromMaterial` теперь
