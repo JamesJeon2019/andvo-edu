@@ -228,6 +228,10 @@ async function illustrateLesson(blocks, subject, onProgress, groundingContext = 
         const croppedImageDataUrl = await cropDiagram(groundingContext.sourceImages[diagram.imageIndex], diagram.bbox);
         grounding = croppedImageDataUrl ? { croppedImageDataUrl, explanation: diagram.explanation } : null;
       }
+      if (grounding) {
+        scene.diagram_photo = grounding.croppedImageDataUrl;
+        scene.diagram_explanation = grounding.explanation;
+      }
       scene.svg_content = await generateSVGWithCritique(scene.voice_text, block.type, subject, grounding);
       done++;
       if (onProgress) onProgress(done, total);

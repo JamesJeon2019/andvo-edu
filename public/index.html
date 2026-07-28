@@ -185,6 +185,9 @@
   .scene-visual{margin:0 16px 14px;background:#ffffff;border:1px solid #e5e7eb;border-radius:8px;padding:8px;box-sizing:border-box;}
   .scene-visual svg{width:100%;height:auto;max-height:320px;display:block;}
   .scene-visual .scene-img{width:100%;height:auto;max-height:320px;object-fit:contain;border-radius:8px;display:block;}
+  .scene-visual-dual{display:flex;gap:12px;align-items:flex-start;}
+  .scene-visual-dual-item{flex:1;min-width:0;display:flex;flex-direction:column;gap:6px;}
+  .scene-visual-dual-label{font-size:11px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.03em;}
   .scene-visual-fallback{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;padding:24px 16px;text-align:center;}
   .scene-visual-icon{font-size:40px;line-height:1;}
   .scene-visual-fallback-text{font-size:13px;color:var(--muted);max-width:340px;line-height:1.6;}
@@ -214,6 +217,7 @@
     .editor-body{flex-direction:column;}
     .sidebar{width:100%;max-height:none;position:static;border-right:none;border-bottom:1px solid var(--border);}
     .main{padding:16px;max-width:100%;}
+    .scene-visual-dual{flex-direction:column;}
   }
 </style>
 </head>
@@ -750,8 +754,8 @@ function sanitizeSvgForDom(svg) {
   return cleaned;
 }
 
-// Prioritetsordning: uppladdad fil → inklistrad länk → AI-genererad SVG → ikon+text.
-// Visar aldrig en tom grå ruta.
+// Prioritetsordning: uppladdad fil → inklistrad länk → (läroboksdiagram + AI-SVG
+// sida vid sida) → AI-genererad SVG ensam → ikon+text. Visar aldrig en tom grå ruta.
 function sceneVisualInnerHtml(sc) {
   if (sc.custom_image) {
     return `<img src="${sc.custom_image}" alt="" class="scene-img"/>`;
@@ -760,6 +764,18 @@ function sceneVisualInnerHtml(sc) {
     return `<img src="${escapeHtml(sc.custom_image_url)}" alt="" class="scene-img"/>`;
   }
   const svg = sanitizeSvgForDom(sc.svg_content);
+  if (sc.diagram_photo) {
+    return `<div class="scene-visual-dual">
+      <div class="scene-visual-dual-item">
+        <div class="scene-visual-dual-label">📖 Ur läroboken</div>
+        <img src="${sc.diagram_photo}" alt="" class="scene-img"/>
+      </div>
+      ${svg ? `<div class="scene-visual-dual-item">
+        <div class="scene-visual-dual-label">🤖 AI-illustration</div>
+        ${svg}
+      </div>` : ''}
+    </div>`;
+  }
   if (svg) return svg;
   const icon = subjectIcon(lesson.subject);
   return `<div class="scene-visual-fallback"><div class="scene-visual-icon">${icon}</div><div class="scene-visual-fallback-text">${escapeHtml(sc.voice_text || '')}</div></div>`;
