@@ -19,8 +19,9 @@ const SVG_TAG_RE = /^<svg[\s\S]*<\/svg>$/i;
  * sanitizeSVG() ska aldrig behöva hantera resonemangstext, se dess
  * ^...$-regex.
  */
-async function generateSVG(voice_text, block_type, subject, instruction = null) {
+async function generateSVG(voice_text, block_type, subject, instruction = null, grounding = null) {
   const instructionLine = instruction ? `\nTeacher instruction: ${instruction}` : '';
+  const groundingLine = grounding ? `\n\nAttached is the actual diagram from the textbook page relevant to this scene. Explanation: ${grounding.explanation}. Use this as the ground truth for what to draw — your illustration must accurately reflect its key elements (simplified/clarified for a student), not contradict or omit them.` : '';
 
   const prompt = `You are a scientific illustrator creating educational SVG diagrams
 for Swedish year 7-9 students studying ${subject}.
@@ -100,12 +101,23 @@ ignore the rest:
    point before writing the path - never draw a curve by eye.
 
 Return PART 1 as plain text, then PART 2 starting with <svg and ending with
-</svg>. Do not wrap the SVG in markdown code fences.${instructionLine}`;
+</svg>. Do not wrap the SVG in markdown code fences.${instructionLine}${groundingLine}`;
+
+  let messageContent = prompt;
+  if (grounding) {
+    const parsed = parseDataUrl(grounding.croppedImageDataUrl);
+    if (parsed) {
+      messageContent = [
+        { type: 'image', source: { type: 'base64', media_type: parsed.mediaType, data: parsed.data } },
+        { type: 'text', text: prompt }
+      ];
+    }
+  }
 
   const response = await client.messages.create({
     model: 'claude-sonnet-4-6',
     max_tokens: 2000,
-    messages: [{ role: 'user', content: prompt }]
+    messages: [{ role: 'user', content: messageContent }]
   });
 
   const raw = response.content[0].text.trim();
