@@ -6,7 +6,6 @@ const { extractTextbookMaterial, detectDiagrams } = require('../agents/textbookR
 const { writeLesson, writeBlock, illustrateLesson, illustrateBlockScenes, countIllustrableScenes } = require('../agents/writer');
 const { checkLesson, checkMaterialFaithfulness } = require('../agents/checker');
 const { generateSVG } = require('../agents/illustrator');
-const { assignSourceImages } = require('../agents/sceneImageMatcher');
 const { searchYoutubeVideos, getCaptionTracks } = require('../agents/youtubeSearch');
 const { getLesson, saveLesson, archiveLesson, listLessons } = require('../db/lessonStore');
 const { scoped } = require('../utils/logger');
@@ -194,25 +193,13 @@ async function runGenerationFromMaterial(lessonId, { material, subject, level, d
     const written = await writeLesson({ plan, level, language });
     log.log('  ✅ Innehåll klart');
 
-    // ── Steg 2.5: Matcha läroboksfoton mot lecture-scener ──
-    for (const block of written.blocks) {
-      if (block.type === 'lecture') {
-        await assignSourceImages(block, sourceImages);
-      }
-    }
-    const autoAssignedCount = written.blocks.reduce((sum, block) => {
-      const scenes = (block.content && block.content.scenes) || [];
-      return sum + scenes.filter(scene => scene.custom_image).length;
-    }, 0);
-    log.log(`  🖼  Bildmatchning: ${autoAssignedCount} scen(er) fick ett läroboksfoto som illustration`);
-
     // ── Steg 3: Illustrator (SVG per scen) ──────────
     const svgTotal = countIllustrableScenes(written.blocks);
     setProgress(lessonId, { step: 'svg', svg_done: 0, svg_total: svgTotal });
     log.log(`  🎨 Illustrator: skapar ${svgTotal} illustrationer...`);
     await illustrateLesson(written.blocks, subject, (done, total) => {
       setProgress(lessonId, { step: 'svg', svg_done: done, svg_total: total });
-    });
+    }, { diagrams: plan.diagrams, sourceImages });
     log.log('  ✅ Illustrationer klara');
 
     // ── Steg 4: Checker ─────────────────────────────
