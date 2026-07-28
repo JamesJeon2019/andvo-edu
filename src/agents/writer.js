@@ -1,6 +1,7 @@
 const Anthropic = require('@anthropic-ai/sdk');
 const { languageInstructionsFor } = require('./level');
 const { generateSVG, renderSVGToPNG, critiqueSVG } = require('./illustrator');
+const { cropDiagram } = require('./textbookReader');
 const { tryParseJson } = require('../utils/jsonParse');
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
@@ -214,14 +215,20 @@ function countIllustrableScenes(blocks) {
  * (sekventiellt, inte parallellt) — anropar onProgress(done, total) efter
  * varje enskild illustration så att /generate kan uppdatera förloppet.
  */
-async function illustrateLesson(blocks, subject, onProgress) {
+async function illustrateLesson(blocks, subject, onProgress, groundingContext = null) {
   const total = countIllustrableScenes(blocks);
   let done = 0;
   if (onProgress) onProgress(done, total);
 
   for (const block of blocks) {
     for (const scene of illustrableScenesOf(block)) {
-      scene.svg_content = await generateSVGWithCritique(scene.voice_text, block.type, subject);
+      let grounding = null;
+      if (groundingContext && Number.isInteger(scene.diagramIndex) && scene.diagramIndex >= 0 && scene.diagramIndex < groundingContext.diagrams.length) {
+        const diagram = groundingContext.diagrams[scene.diagramIndex];
+        const croppedImageDataUrl = await cropDiagram(groundingContext.sourceImages[diagram.imageIndex], diagram.bbox);
+        grounding = croppedImageDataUrl ? { croppedImageDataUrl, explanation: diagram.explanation } : null;
+      }
+      scene.svg_content = await generateSVGWithCritique(scene.voice_text, block.type, subject, grounding);
       done++;
       if (onProgress) onProgress(done, total);
     }
@@ -244,14 +251,14 @@ async function illustrateBlockScenes(block, subject) {
  * anropet görs om exakt en gång — misslyckas det igen, eller vid något annat
  * fel, loggas det och funktionen returnerar null istället för att kasta.
  */
-async function generateSVGWithRetry(voiceText, blockType, subject) {
+async function generateSVGWithRetry(voiceText, blockType, subject, grounding = null) {
   try {
-    return await generateSVG(voiceText, blockType, subject);
+    return await generateSVG(voiceText, blockType, subject, null, grounding);
   } catch (err) {
     if (err.status === 429) {
       await new Promise(resolve => setTimeout(resolve, 2000));
       try {
-        return await generateSVG(voiceText, blockType, subject);
+        return await generateSVG(voiceText, blockType, subject, null, grounding);
       } catch (retryErr) {
         console.error('Illustrator error (after 429 retry):', retryErr.message);
         return null;
@@ -283,8 +290,8 @@ async function generateSVGWithRetry(voiceText, blockType, subject) {
  * "Rita om"/"Ge instruktion" i /:id/block/:blockId/regenerate-svg, där
  * automatisk kritik skulle kunna motsäga lärarens uttryckliga instruktion.
  */
-async function generateSVGWithCritique(voiceText, blockType, subject) {
-  const svg = await generateSVGWithRetry(voiceText, blockType, subject);
+async function generateSVGWithCritique(voiceText, blockType, subject, grounding = null) {
+  const svg = await generateSVGWithRetry(voiceText, blockType, subject, grounding);
   if (!svg) return svg;
 
   const png = renderSVGToPNG(svg);
@@ -296,7 +303,7 @@ async function generateSVGWithCritique(voiceText, blockType, subject) {
   console.log(`Illustrator critique flagged an issue, regenerating once: ${critique.issue}`);
 
   try {
-    const regenerated = await generateSVG(voiceText, blockType, subject, critique.issue);
+    const regenerated = await generateSVG(voiceText, blockType, subject, critique.issue, grounding);
     console.log(`Illustrator critique: regeneration ${regenerated ? 'produced a new SVG' : 'returned no usable SVG'} - using it as final regardless of any further critique`);
     return regenerated || svg;
   } catch (err) {
