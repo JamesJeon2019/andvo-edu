@@ -12,3 +12,14 @@ CREATE TABLE IF NOT EXISTS lessons (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- Schools: single shared login per school. All teachers at a school share
+-- this one account and see each other's lessons; isolation is only between
+-- different schools (see school_id on lessons, added separately).
+CREATE TABLE IF NOT EXISTS schools (
+  id UUID PRIMARY KEY,
+  name TEXT NOT NULL,
+  username TEXT NOT NULL UNIQUE,
+  password_hash TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
