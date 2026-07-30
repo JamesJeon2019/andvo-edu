@@ -1,13 +1,13 @@
 # Handoff — Andvo Edu
 
-_Last updated: 2026-07-28_
+_Last updated: 2026-07-30_
 
 ## Project status
 
 Andvo Edu is an AI-powered lesson generator for Swedish schools (Node.js +
 Express backend, Claude API for content generation, plain HTML/CSS/JS
 frontend, deployed on Render). `main` is clean and up to date with
-`origin/main` at commit `d1b2f84`. Lesson storage now persists in a real
+`origin/main` at commit `39f3b16`. Lesson storage now persists in a real
 Postgres database (Neon) instead of an in-memory Map — see "What was
 completed" below. Local dev server (`npm run dev`, port 3000) starts
 cleanly, runs the DB migration on boot, and `/health` responds as
@@ -425,6 +425,32 @@ and voice playback + YouTube links are supported per block.
   прокидывание через planner/writer, заземление иллюстратора,
   фронтенд-отображение, вывод старого механизма из эксплуатации) —
   ЗАВЕРШЁН.
+- Начата реализация многопользовательской архитектуры (school-level login,
+  без Google OAuth):
+  - Шаг 1 (`a9ce5d2`): таблица `schools` в `src/db/schema.sql` (id, name,
+    username UNIQUE, password_hash, created_at) + `src/db/schoolStore.js`
+    (`createSchool`, `verifySchoolLogin` через `bcryptjs`, `getSchoolById`),
+    стиль 1-в-1 с `lessonStore.js` (прямые `pool.query`, JSDoc на шведском).
+    UUID генерируется в коде через уже используемый пакет `uuid`, не через
+    `pgcrypto`/`gen_random_uuid()` — для консистентности с `lessons.id`.
+    Одноразовый интерактивный CLI-скрипт `scripts/create-school.js` (НЕ в
+    git, по аналогии с `illustration-audit.js`) для ручного добавления
+    новых школ. Проверено на реальной БД: создание, поиск по id, верный и
+    неверный пароль при логине.
+  - Шаг 2a (`39f3b16`): сессии на `express-session` + `connect-pg-simple`,
+    хранятся в Postgres (таблица `session`, автосоздаётся через
+    `createTableIfMissing`), а не в памяти — переживают рестарт/редеплой
+    сервера. `app.set('trust proxy', 1)` в `src/index.js` для корректной
+    работы `secure` cookie за прокси Render (без этого проблема не
+    проявится локально, там `secure: false`). `SESSION_SECRET` обязателен
+    при старте сервера — `process.exit(1)`, если отсутствует, по аналогии
+    с существующей проверкой `DATABASE_URL`. Роуты `src/routes/auth.js`:
+    `POST /api/auth/login`, `POST /api/auth/logout`, `GET /api/auth/me`.
+    Middleware `src/middleware/requireAuth.js` создан, но пока никуда не
+    подключён. Проверено через curl против реального dev-сервера — все 5
+    сценариев (успешный вход, `/me` после входа, неверный пароль, выход,
+    `/me` после выхода) работают корректно. `SESSION_SECRET` сгенерирован
+    и добавлен и в локальный `.env`, и в переменные окружения Render.
 
 ## Next steps
 
@@ -469,24 +495,29 @@ and voice playback + YouTube links are supported per block.
   "Använd →" button did. New elements like this should either call
   `scrollRowBelowHeader()` (see "What was completed" above) or otherwise
   account for the sticky header when they open.
-- No multi-user architecture yet: there's no teacher authentication, and
-  `GET /api/lesson` currently returns every lesson in the database to any
-  caller with no per-user scoping. Needs discussion (who owns a lesson,
-  what auth approach, expected load) before this goes live for multiple
-  schools/teachers at once.
-- Решение принято (реализация не начата): НЕ использовать Google
-  OAuth/Classroom для авторизации сейчас — Google Classroom в Швеции
-  завязан на Skolverket, это отдельный, гораздо более глобальный уровень
-  интеграции, не относящийся к текущей цели (продажа отдельным школам
-  как самостоятельный инструмент между учителями внутри школы, не
-  национальная инфраструктура). Вместо этого: простая модель "school" —
-  таблица `schools` в БД (название, логин, хеш пароля), уроки привязаны к
-  `school_id` (не к отдельному учителю — все учителя одной школы видят
-  уроки друг друга, изоляция только между разными школами), простой
-  экран входа/сессия, защита роутов по `school_id`. Google Classroom
-  интеграция отложена как отдельная, возможно нереализуемая для
-  отдельных школ тема — не блокирует и не влияет на текущую архитектуру.
-  Не начато реализовывать.
+- Продолжение многопользовательской архитектуры — оставшиеся подшаги:
+  - Шаг 2b: добавить `school_id` к таблице `lessons` (миграция
+    `schema.sql`), обновить `lessonStore.js` (`saveLesson`
+    принимает/сохраняет `school_id`; `getLesson`/`listLessons`/
+    `archiveLesson`/`deleteLesson` фильтруют или проверяют `school_id`
+    против текущей сессии — защита от доступа к чужим урокам даже по
+    прямому подбору ID), подключить `requireAuth` middleware ко всем
+    роутам в `routes/lesson.js`, прокинуть `req.session.schoolId` в
+    вызовы store-функций. Существующие тестовые уроки в БД (созданные до
+    этого шага) станут без владельца/недоступны через school-scoped
+    запросы — это ожидаемо, это просто тестовые данные, не настоящие
+    уроки учителей.
+  - Шаг 2c: фронтенд — экран входа (логин/пароль школы), кнопка выхода,
+    обработка 401 (редирект на экран входа), скрытие остального
+    интерфейса до успешного входа.
+  Решение уже принято (см. "What was completed" выше для прогресса): НЕ
+  использовать Google OAuth/Classroom для авторизации сейчас — Google
+  Classroom в Швеции завязан на Skolverket, это отдельный, гораздо более
+  глобальный уровень интеграции, не относящийся к текущей цели (продажа
+  отдельным школам как самостоятельный инструмент между учителями внутри
+  школы, не национальная инфраструктура). Google Classroom интеграция
+  отложена как отдельная, возможно нереализуемая для отдельных школ
+  тема — не блокирует и не влияет на текущую архитектуру.
 - (Minor, not urgent) `POST /api/image/validate` can still take up to
   ~6s on a genuinely broken link (3s HEAD timeout + 3s GET-fallback
   timeout, both via `AbortController` — lowered from 5s+5s, see "What
