@@ -6,12 +6,21 @@ const path = require('path');
 const fs = require('fs');
 const rateLimit = require('express-rate-limit');
 
+const session = require('express-session');
+const pgSession = require('connect-pg-simple')(session);
+
 const pool = require('./db/pool');
 const lessonRoutes = require('./routes/lesson');
 const imageRoutes = require('./routes/image');
+const authRoutes = require('./routes/auth');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+
+// Render terminerar HTTPS på sin egen proxy — utan detta känner Express
+// inte igen anslutningen som säker, vilket gör att session-cookien med
+// secure: true kan bete sig fel i produktion.
+app.set('trust proxy', 1);
 
 // ── Middleware ──────────────────────────────────────
 app.use(cors());
@@ -22,6 +31,23 @@ app.use(cors());
 // normalt förväntas användas.
 app.use(express.json({ limit: '20mb' }));
 app.use(express.static(path.join(__dirname, '../public')));
+
+if (!process.env.SESSION_SECRET) {
+  console.error('❌ SESSION_SECRET saknas i miljövariablerna');
+  process.exit(1);
+}
+
+app.use(session({
+  store: new pgSession({ pool, createTableIfMissing: true }),
+  secret: process.env.SESSION_SECRET,
+  resave: false,
+  saveUninitialized: false,
+  cookie: {
+    maxAge: 30 * 24 * 60 * 60 * 1000, // 30 dagar
+    secure: process.env.NODE_ENV === 'production',
+    httpOnly: true
+  }
+}));
 
 // Rate limit — skydd mot spam av AI-anrop. /status pollas var 3:e sekund av
 // frontend under generering och ska inte räknas mot samma gräns.
@@ -34,6 +60,7 @@ const limiter = rateLimit({
 app.use('/api/', limiter);
 
 // ── Routes ─────────────────────────────────────────
+app.use('/api/auth', authRoutes);
 app.use('/api/lesson', lessonRoutes);
 app.use('/api/image', imageRoutes);
 
