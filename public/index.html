@@ -337,8 +337,8 @@
 
 <!-- Öppnar en lektion (från lista eller direktlänk) -->
 <div id="lessonOpening" style="display:none;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;gap:16px;">
-  <div class="spinner"></div>
-  <div style="color:var(--accent);font-weight:600;">Öppnar lektion...</div>
+  <div class="spinner" id="lessonOpeningSpinner"></div>
+  <div style="color:var(--accent);font-weight:600;" id="lessonOpeningMsg">Öppnar lektion...</div>
 </div>
 
 <!-- MINA LEKTIONER -->
@@ -359,11 +359,12 @@
       <div class="lesson-title" id="edTitle"></div>
       <div class="lesson-meta" id="edMeta"></div>
     </div>
-    <div style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap;">
+    <div style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
       <button class="hbtn" onclick="backToSetup()">← Ny lektion</button>
       <button class="hbtn" id="archiveBtn" onclick="archiveCurrentLesson()">📁 Arkivera</button>
       <button class="hbtn" id="copyLinkBtn" onclick="copyLessonLink()">🔗 Kopiera länk</button>
-      <button class="hbtn pr" onclick="alert('Elevvy kommer snart!')">👁 Elevvy →</button>
+      <button class="hbtn pr" id="shareStudentBtn" onclick="copyStudentLink()">👁 Elevvy →</button>
+      <span id="viewModeLabel" style="display:none;font-size:12px;color:var(--muted);">👁 Elevvy — endast läsning</span>
     </div>
   </div>
 
@@ -385,6 +386,7 @@ let lesson = null;
 let lessonStatus = 'draft';
 let currentBlockIdx = 0;
 let currentSchool = null;
+let viewMode = false;
 
 /* ══════════════════ SKÄRMNAVIGERING & URL-SYNK (?lesson=<id>) ══════════════════ */
 const SCREEN_IDS = ['login', 'setup', 'loading', 'materialReading', 'materialConfirm', 'lessonOpening', 'lessonsList', 'editor'];
@@ -414,6 +416,21 @@ function copyLessonLink() {
   const url = `${location.origin}${location.pathname}?lesson=${lessonId}`;
   navigator.clipboard.writeText(url);
   const btn = document.getElementById('copyLinkBtn');
+  if (!btn) return;
+  const original = btn.textContent;
+  btn.textContent = '✅ Kopierad!';
+  setTimeout(() => { btn.textContent = original; }, 2000);
+}
+
+/**
+ * Kopierar en publik, skrivskyddad elevlänk (?view=<id>) — kringgår
+ * inloggningskontrollen helt, se GET /api/lesson/:id/view och
+ * openLessonForView().
+ */
+function copyStudentLink() {
+  const url = `${location.origin}${location.pathname}?view=${lessonId}`;
+  navigator.clipboard.writeText(url);
+  const btn = document.getElementById('shareStudentBtn');
   if (!btn) return;
   const original = btn.textContent;
   btn.textContent = '✅ Kopierad!';
@@ -472,11 +489,46 @@ function updateSchoolName() {
 }
 
 /**
- * Körs vid sidladdning. Kollar inloggningsstatus mot GET /api/auth/me
- * innan resten av appen (initFromUrl) får köra — en utloggad besökare
- * ska aldrig se setup/editor-skärmarna, bara login.
+ * Öppnar en lektion i publikt, skrivskyddat elevläge via ?view=<id> —
+ * kringgår helt inloggningskontrollen (GET /api/auth/me anropas aldrig
+ * i detta läge), hämtar direkt från den publika
+ * GET /api/lesson/:id/view-rutten. Återanvänder #lessonOpening-skärmen
+ * både för spinnern och för ett enkelt felmeddelande, ingen separat
+ * skärm behövs för det sällsynta felfallet.
+ */
+async function openLessonForView(id) {
+  viewMode = true;
+  showScreen('lessonOpening');
+  try {
+    const res = await fetch(`/api/lesson/${id}/view`);
+    const data = await res.json();
+    if (!res.ok || !data.success) throw new Error(data.error || 'Lektionen hittades inte');
+    lesson = data.lesson;
+    lessonId = id;
+    renderEditor();
+  } catch (e) {
+    const spinner = document.getElementById('lessonOpeningSpinner');
+    const msg = document.getElementById('lessonOpeningMsg');
+    if (spinner) spinner.style.display = 'none';
+    if (msg) msg.textContent = 'Lektionen kunde inte hittas';
+  }
+}
+
+/**
+ * Körs vid sidladdning. En ?view=<id>-länk är en avsiktligt publik
+ * elevväg och kringgår inloggningskontrollen helt (se
+ * openLessonForView). Annars kollas inloggningsstatus mot GET
+ * /api/auth/me innan resten av appen (initFromUrl) får köra — en
+ * utloggad besökare ska aldrig se setup/editor-skärmarna, bara login.
  */
 async function initApp() {
+  const params = new URLSearchParams(window.location.search);
+  const viewId = params.get('view');
+  if (viewId) {
+    await openLessonForView(viewId);
+    return;
+  }
+
   try {
     const res = await fetch('/api/auth/me');
     if (res.status === 401) {
@@ -630,7 +682,7 @@ function updateEditorHeaderStatus() {
     (lessonStatus === 'archived' ? ' · 🗄 Arkiverad' : '');
 
   const archiveBtn = document.getElementById('archiveBtn');
-  if (archiveBtn) archiveBtn.style.display = (lessonStatus === 'archived') ? 'none' : '';
+  if (archiveBtn) archiveBtn.style.display = (viewMode || lessonStatus === 'archived') ? 'none' : '';
 }
 
 /* ══════════════════ RÖSTUPPLÄSNING (Web Speech API) ══════════════════ */
@@ -888,6 +940,7 @@ function sceneVisualInnerHtml(sc) {
 }
 
 function sceneControlsInnerHtml(idx, si) {
+  if (viewMode) return ''; // elever ska inte kunna ändra illustrationer
   const sc = (sceneData[idx] || [])[si] || {};
   const hasCustom = !!(sc.custom_image || sc.custom_image_url);
   return `
@@ -1483,6 +1536,10 @@ function renderEditor() {
   document.getElementById('edTitle').textContent = lesson.title;
   updateEditorHeaderStatus();
 
+  document.getElementById('copyLinkBtn').style.display = viewMode ? 'none' : '';
+  document.getElementById('shareStudentBtn').style.display = viewMode ? 'none' : '';
+  document.getElementById('viewModeLabel').style.display = viewMode ? '' : 'none';
+
   // Check bar
   const cb = document.getElementById('checkBar');
   if (lesson.check) {
@@ -1494,7 +1551,9 @@ function renderEditor() {
   }
 
   buildSidebar();
-  renderBlock(0);
+  // I elevläge kan startblocket inte vara ett block läraren dolt.
+  const startIdx = viewMode ? Math.max(0, lesson.blocks.findIndex(b => b.visible)) : 0;
+  renderBlock(startIdx);
 }
 
 const typeIcons = { lecture:'📖', task:'✏️', video:'🎬', test:'✅' };
@@ -1502,13 +1561,29 @@ const typeClass = { lecture:'tl', task:'tt', video:'tv', test:'ts' };
 const typeLabel = { lecture:'Lektion', task:'Uppgift', video:'Video', test:'Test' };
 const badgeClass = { lecture:'bl', task:'bt', video:'bv', test:'bs' };
 
+/**
+ * Söker närmaste synliga blockindex i given riktning (1 eller -1) från
+ * fromIdx, eller -1 om inget hittas. Används för Föregående/Nästa i
+ * elevläget, där dolda block ska hoppas över helt.
+ */
+function findVisibleBlockIdx(fromIdx, dir) {
+  let i = fromIdx + dir;
+  while (i >= 0 && i < lesson.blocks.length) {
+    if (lesson.blocks[i].visible) return i;
+    i += dir;
+  }
+  return -1;
+}
+
 function buildSidebar() {
   const nav = document.getElementById('sideNav');
   nav.innerHTML = '';
   lesson.blocks.forEach((b, i) => {
+    if (viewMode && !b.visible) return; // dolda block ska varken synas eller nås i elevläget
     const div = document.createElement('div');
     div.className = 'sb-item' + (i===currentBlockIdx?' active':'') + (!b.visible?' hidden-block':'');
     div.id = 'sbnav' + i;
+    div.dataset.blockIdx = i;
     div.onclick = () => renderBlock(i);
     div.innerHTML = `<div class="type-icon ${typeClass[b.type]}">${typeIcons[b.type]}</div>
       <span>${b.title}</span>
@@ -1520,7 +1595,11 @@ function buildSidebar() {
 function renderBlock(idx) {
   stopSpeech();
   currentBlockIdx = idx;
-  document.querySelectorAll('.sb-item').forEach((el, i) => {
+  // data-block-idx (satt i buildSidebar) används istället för DOM-ordning,
+  // eftersom elevläget filtrerar bort dolda block ur sidopanelen helt —
+  // då stämmer inte längre .sb-item-elementens ordning mot lesson.blocks-index.
+  document.querySelectorAll('.sb-item').forEach((el) => {
+    const i = parseInt(el.dataset.blockIdx, 10);
     el.className = 'sb-item' + (i===idx?' active':'') + (!lesson.blocks[i].visible?' hidden-block':'');
   });
 
@@ -1534,12 +1613,12 @@ function renderBlock(idx) {
       <span style="font-size:12px;color:var(--muted)">⏱ ${b.duration} min</span>
       ${!b.visible?'<span style="font-size:12px;color:var(--red)">● Dold</span>':''}
     </div>
-    <div class="block-actions">
+    ${viewMode ? '' : `<div class="block-actions">
       <button class="abtn warn" onclick="toggleBlock(${idx})">${b.visible?'👁 Dölj':'👁 Visa'}</button>
       <button class="abtn danger" onclick="deleteBlock(${idx})">🗑 Ta bort</button>
       ${idx>0?`<button class="abtn" onclick="moveBlock(${idx},-1)">↑ Flytta upp</button>`:''}
       ${idx<lesson.blocks.length-1?`<button class="abtn" onclick="moveBlock(${idx},1)">↓ Flytta ner</button>`:''}
-    </div>
+    </div>`}
     <div class="block-title">${b.title}</div>`;
 
   let videoBlockIdx = null;
@@ -1565,19 +1644,24 @@ function renderBlock(idx) {
     html += buildScenePlayer(idx, getScenesForBlock(b, c), { answers: true });
   }
 
-  // AI rewrite
-  html += `<div class="ai-rewrite">
-    <div class="ai-rewrite-label">🤖 Be AI ändra detta block:</div>
-    <div class="ai-row">
-      <input class="ai-input" id="aiInp${idx}" placeholder="T.ex. 'förenkla förklaringen' eller 'lägg till ett exempel'"/>
-      <button class="ai-btn" onclick="rewriteBlock(${idx})">Ändra →</button>
-    </div>
-  </div>`;
+  // AI rewrite — läraren-kontroll, ska aldrig visas för elever
+  if (!viewMode) {
+    html += `<div class="ai-rewrite">
+      <div class="ai-rewrite-label">🤖 Be AI ändra detta block:</div>
+      <div class="ai-row">
+        <input class="ai-input" id="aiInp${idx}" placeholder="T.ex. 'förenkla förklaringen' eller 'lägg till ett exempel'"/>
+        <button class="ai-btn" onclick="rewriteBlock(${idx})">Ändra →</button>
+      </div>
+    </div>`;
+  }
 
-  // Nav
+  // Nav — i elevläge hoppar Föregående/Nästa över dolda block istället för
+  // att bara gå ±1, annars går det att navigera rakt in i ett dolt block.
+  const prevIdx = viewMode ? findVisibleBlockIdx(idx, -1) : (idx > 0 ? idx - 1 : -1);
+  const nextIdx = viewMode ? findVisibleBlockIdx(idx, 1) : (idx < lesson.blocks.length - 1 ? idx + 1 : -1);
   html += `<div class="block-nav">
-    ${idx>0?`<button class="nbtn" onclick="renderBlock(${idx-1})">← Föregående</button>`:''}
-    ${idx<lesson.blocks.length-1?`<button class="nbtn pr" onclick="renderBlock(${idx+1})">Nästa →</button>`:''}
+    ${prevIdx>=0?`<button class="nbtn" onclick="renderBlock(${prevIdx})">← Föregående</button>`:''}
+    ${nextIdx>=0?`<button class="nbtn pr" onclick="renderBlock(${nextIdx})">Nästa →</button>`:''}
   </div>`;
 
   main.innerHTML = html;
