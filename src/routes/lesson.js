@@ -7,9 +7,22 @@ const { writeLesson, writeBlock, illustrateLesson, illustrateBlockScenes, countI
 const { checkLesson, checkMaterialFaithfulness } = require('../agents/checker');
 const { generateSVG } = require('../agents/illustrator');
 const { searchYoutubeVideos, getCaptionTracks } = require('../agents/youtubeSearch');
-const { getLesson, saveLesson, archiveLesson, listLessons } = require('../db/lessonStore');
+const { getLesson, saveLesson, archiveLesson, listLessons, getLessonPublic } = require('../db/lessonStore');
 const { scoped } = require('../utils/logger');
 const requireAuth = require('../middleware/requireAuth');
+
+/**
+ * GET /api/lesson/:id/view
+ * Publik, skrivskyddad elevvisning via direktlänk — id/UUID:et fungerar
+ * som hemligheten, ingen inloggning krävs och ingen lista exponeras.
+ * MÅSTE stå ovanför router.use(requireAuth) nedan — det här är en
+ * avsiktligt publik rutt för elevvisning, inte en bugg.
+ */
+router.get('/:id/view', async (req, res) => {
+  const lesson = await getLessonPublic(req.params.id);
+  if (!lesson) return res.status(404).json({ error: 'Lektionen hittades inte' });
+  res.json({ success: true, lesson });
+});
 
 // Kräver inloggad skola för samtliga routes i denna router.
 router.use(requireAuth);

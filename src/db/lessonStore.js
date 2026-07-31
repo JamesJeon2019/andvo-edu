@@ -14,6 +14,17 @@ async function getLesson(id, schoolId) {
 }
 
 /**
+ * Hämtar en lektions fulla data-objekt via id, UTAN school_id-filter —
+ * avsiktligt publik åtkomst för elevvisning via direktlänk (id/UUID:et
+ * fungerar som hemligheten, ingen lista exponeras). Returnerar data eller
+ * null om lektionen inte finns.
+ */
+async function getLessonPublic(id) {
+  const { rows } = await pool.query('SELECT data FROM lessons WHERE id = $1', [id]);
+  return rows.length ? rows[0].data : null;
+}
+
+/**
  * Upsertar en lektion. Hela lesson-objektet sparas i data (JSONB);
  * subject/level/mode/title bryts ut ur samma objekt för framtida
  * list/filter-vyer. mode härleds från data.source ('material' → 'material',
@@ -77,4 +88,4 @@ async function deleteLesson(id, schoolId) {
   await pool.query('DELETE FROM lessons WHERE id = $1 AND school_id = $2', [id, schoolId]);
 }
 
-module.exports = { getLesson, saveLesson, archiveLesson, listLessons, deleteLesson };
+module.exports = { getLesson, saveLesson, archiveLesson, listLessons, deleteLesson, getLessonPublic };
