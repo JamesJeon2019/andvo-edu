@@ -23,3 +23,7 @@ CREATE TABLE IF NOT EXISTS schools (
   password_hash TEXT NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- Ties each lesson to the school that owns it. Nullable — pre-existing
+-- lessons in the database stay without a school_id, which is expected.
+ALTER TABLE lessons ADD COLUMN IF NOT EXISTS school_id UUID REFERENCES schools(id);

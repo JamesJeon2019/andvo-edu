@@ -9,6 +9,10 @@ const { generateSVG } = require('../agents/illustrator');
 const { searchYoutubeVideos, getCaptionTracks } = require('../agents/youtubeSearch');
 const { getLesson, saveLesson, archiveLesson, listLessons } = require('../db/lessonStore');
 const { scoped } = require('../utils/logger');
+const requireAuth = require('../middleware/requireAuth');
+
+// Kräver inloggad skola för samtliga routes i denna router.
+router.use(requireAuth);
 
 // In-memory förloppsindikator per lektions-ID, för /status-polling under generering
 // (avsiktligt kortlivad — rensas aldrig mot databasen, se handoff.md)
@@ -42,6 +46,7 @@ router.post('/generate', (req, res) => {
   }
 
   const lessonId = uuidv4();
+  const schoolId = req.session.schoolId;
   setProgress(lessonId, { step: 'plan', svg_done: 0, svg_total: 0, error: null });
 
   res.json({ success: true, lessonId });
@@ -51,11 +56,12 @@ router.post('/generate', (req, res) => {
     subject,
     level,
     duration: duration || 60,
-    language: language || 'sv'
+    language: language || 'sv',
+    schoolId
   });
 });
 
-async function runGeneration(lessonId, { topic, subject, level, duration, language }) {
+async function runGeneration(lessonId, { topic, subject, level, duration, language, schoolId }) {
   const log = scoped(lessonId.slice(0, 8));
   log.log(`\n📚 Genererar lektion: "${topic}" | ${subject} | ${level}`);
 
@@ -93,7 +99,7 @@ async function runGeneration(lessonId, { topic, subject, level, duration, langua
       check: checkResult,
       createdAt: new Date().toISOString()
     };
-    await saveLesson(lessonId, finalLesson);
+    await saveLesson(lessonId, finalLesson, schoolId);
 
     setProgress(lessonId, { step: 'done', svg_done: svgTotal, svg_total: svgTotal });
     log.log(`  🎉 Lektion klar: ID ${lessonId}\n`);
@@ -154,6 +160,7 @@ router.post('/generate-from-material', (req, res) => {
   }
 
   const lessonId = uuidv4();
+  const schoolId = req.session.schoolId;
   setProgress(lessonId, { step: 'plan', svg_done: 0, svg_total: 0, error: null });
 
   res.json({ success: true, lessonId });
@@ -164,11 +171,12 @@ router.post('/generate-from-material', (req, res) => {
     level,
     duration: duration || 60,
     language: language || 'sv',
-    sourceImages: sourceImages || []
+    sourceImages: sourceImages || [],
+    schoolId
   });
 });
 
-async function runGenerationFromMaterial(lessonId, { material, subject, level, duration, language, sourceImages }) {
+async function runGenerationFromMaterial(lessonId, { material, subject, level, duration, language, sourceImages, schoolId }) {
   const log = scoped(lessonId.slice(0, 8));
   log.log(`\n📖 Genererar lektion från lärobok | ${subject} | ${level}`);
 
@@ -223,7 +231,7 @@ async function runGenerationFromMaterial(lessonId, { material, subject, level, d
       sourceImages,
       createdAt: new Date().toISOString()
     };
-    await saveLesson(lessonId, finalLesson);
+    await saveLesson(lessonId, finalLesson, schoolId);
 
     setProgress(lessonId, { step: 'done', svg_done: svgTotal, svg_total: svgTotal });
     log.log(`  🎉 Lektion klar: ID ${lessonId}\n`);
@@ -260,7 +268,7 @@ router.get('/:id/status', (req, res) => {
  * Hämta en lektion via ID
  */
 router.get('/:id', async (req, res) => {
-  const lesson = await getLesson(req.params.id);
+  const lesson = await getLesson(req.params.id, req.session.schoolId);
   if (!lesson) return res.status(404).json({ error: 'Lektionen hittades inte' });
   res.json({ success: true, lesson });
 });
@@ -270,7 +278,7 @@ router.get('/:id', async (req, res) => {
  * Uppdatera ett block (läraren redigerar)
  */
 router.put('/:id/block/:blockId', async (req, res) => {
-  const lesson = await getLesson(req.params.id);
+  const lesson = await getLesson(req.params.id, req.session.schoolId);
   if (!lesson) return res.status(404).json({ error: 'Lektionen hittades inte' });
 
   const blockId = parseInt(req.params.blockId);
@@ -278,7 +286,7 @@ router.put('/:id/block/:blockId', async (req, res) => {
   if (blockIndex === -1) return res.status(404).json({ error: 'Blocket hittades inte' });
 
   lesson.blocks[blockIndex] = { ...lesson.blocks[blockIndex], ...req.body };
-  await saveLesson(lesson.id, lesson);
+  await saveLesson(lesson.id, lesson, req.session.schoolId);
 
   res.json({ success: true, block: lesson.blocks[blockIndex] });
 });
@@ -288,12 +296,12 @@ router.put('/:id/block/:blockId', async (req, res) => {
  * Ta bort ett block
  */
 router.delete('/:id/block/:blockId', async (req, res) => {
-  const lesson = await getLesson(req.params.id);
+  const lesson = await getLesson(req.params.id, req.session.schoolId);
   if (!lesson) return res.status(404).json({ error: 'Lektionen hittades inte' });
 
   const blockId = parseInt(req.params.blockId);
   lesson.blocks = lesson.blocks.filter(b => b.id !== blockId);
-  await saveLesson(lesson.id, lesson);
+  await saveLesson(lesson.id, lesson, req.session.schoolId);
 
   res.json({ success: true, blocksRemaining: lesson.blocks.length });
 });
@@ -303,7 +311,7 @@ router.delete('/:id/block/:blockId', async (req, res) => {
  * Dölj/visa ett block (tar inte bort det)
  */
 router.put('/:id/block/:blockId/toggle', async (req, res) => {
-  const lesson = await getLesson(req.params.id);
+  const lesson = await getLesson(req.params.id, req.session.schoolId);
   if (!lesson) return res.status(404).json({ error: 'Lektionen hittades inte' });
 
   const blockId = parseInt(req.params.blockId);
@@ -311,7 +319,7 @@ router.put('/:id/block/:blockId/toggle', async (req, res) => {
   if (!block) return res.status(404).json({ error: 'Blocket hittades inte' });
 
   block.visible = !block.visible;
-  await saveLesson(lesson.id, lesson);
+  await saveLesson(lesson.id, lesson, req.session.schoolId);
 
   res.json({ success: true, blockId, visible: block.visible });
 });
@@ -321,7 +329,7 @@ router.put('/:id/block/:blockId/toggle', async (req, res) => {
  * Spara en YouTube-länk (försvinner inte vid navigering)
  */
 router.put('/:id/block/:blockId/youtube', async (req, res) => {
-  const lesson = await getLesson(req.params.id);
+  const lesson = await getLesson(req.params.id, req.session.schoolId);
   if (!lesson) return res.status(404).json({ error: 'Lektionen hittades inte' });
 
   const blockId = parseInt(req.params.blockId);
@@ -331,7 +339,7 @@ router.put('/:id/block/:blockId/youtube', async (req, res) => {
   block.content = block.content || {};
   block.content.youtube_url = req.body.url;
   block.youtube_url = req.body.url;
-  await saveLesson(lesson.id, lesson);
+  await saveLesson(lesson.id, lesson, req.session.schoolId);
 
   res.json({ success: true, youtube_url: req.body.url });
 });
@@ -343,7 +351,7 @@ router.put('/:id/block/:blockId/youtube', async (req, res) => {
  * och manuellt när läraren skriver egna sökord ("Sök igen").
  */
 router.post('/:id/block/:blockId/youtube-search', async (req, res) => {
-  const lesson = await getLesson(req.params.id);
+  const lesson = await getLesson(req.params.id, req.session.schoolId);
   if (!lesson) return res.status(404).json({ error: 'Lektionen hittades inte' });
 
   const { query } = req.body;
@@ -375,7 +383,7 @@ router.get('/youtube-captions/:videoId', async (req, res) => {
  * AI skriver om ett block enligt lärarens instruktion
  */
 router.post('/:id/block/:blockId/rewrite', async (req, res) => {
-  const lesson = await getLesson(req.params.id);
+  const lesson = await getLesson(req.params.id, req.session.schoolId);
   if (!lesson) return res.status(404).json({ error: 'Lektionen hittades inte' });
 
   const blockId = parseInt(req.params.blockId);
@@ -402,7 +410,7 @@ router.post('/:id/block/:blockId/rewrite', async (req, res) => {
     await illustrateBlockScenes(rewritten, lesson.subject);
 
     lesson.blocks[blockIndex] = { ...rewritten, id: blockId };
-    await saveLesson(lesson.id, lesson);
+    await saveLesson(lesson.id, lesson, req.session.schoolId);
 
     res.json({ success: true, block: lesson.blocks[blockIndex] });
   } catch (error) {
@@ -417,7 +425,7 @@ router.post('/:id/block/:blockId/rewrite', async (req, res) => {
  * Body: { sceneIndex: 0, instruction: "valfri instruktion på svenska" }
  */
 router.post('/:id/block/:blockId/regenerate-svg', async (req, res) => {
-  const lesson = await getLesson(req.params.id);
+  const lesson = await getLesson(req.params.id, req.session.schoolId);
   if (!lesson) return res.status(404).json({ error: 'Lektionen hittades inte' });
 
   const blockId = parseInt(req.params.blockId);
@@ -437,7 +445,7 @@ router.post('/:id/block/:blockId/regenerate-svg', async (req, res) => {
     scene.svg_content = svg;
     scene.custom_image = null;
     scene.custom_image_url = null;
-    await saveLesson(lesson.id, lesson);
+    await saveLesson(lesson.id, lesson, req.session.schoolId);
 
     res.json({ svg_content: svg });
   } catch (error) {
@@ -456,7 +464,7 @@ router.post('/:id/block/:blockId/regenerate-svg', async (req, res) => {
  * den andra. Body: { custom_image: string|null, custom_image_url: string|null }
  */
 router.put('/:id/block/:blockId/scene/:sceneIndex/image', async (req, res) => {
-  const lesson = await getLesson(req.params.id);
+  const lesson = await getLesson(req.params.id, req.session.schoolId);
   if (!lesson) return res.status(404).json({ error: 'Lektionen hittades inte' });
 
   const blockId = parseInt(req.params.blockId);
@@ -471,7 +479,7 @@ router.put('/:id/block/:blockId/scene/:sceneIndex/image', async (req, res) => {
   const { custom_image, custom_image_url } = req.body;
   scene.custom_image = custom_image || null;
   scene.custom_image_url = scene.custom_image ? null : (custom_image_url || null);
-  await saveLesson(lesson.id, lesson);
+  await saveLesson(lesson.id, lesson, req.session.schoolId);
 
   res.json({ success: true });
 });
@@ -481,7 +489,7 @@ router.put('/:id/block/:blockId/scene/:sceneIndex/image', async (req, res) => {
  * Ändra ordningen på blocken
  */
 router.put('/:id/blocks/reorder', async (req, res) => {
-  const lesson = await getLesson(req.params.id);
+  const lesson = await getLesson(req.params.id, req.session.schoolId);
   if (!lesson) return res.status(404).json({ error: 'Lektionen hittades inte' });
 
   const { order } = req.body; // array med ID:n i ny ordning
@@ -489,7 +497,7 @@ router.put('/:id/blocks/reorder', async (req, res) => {
 
   const reordered = order.map(id => lesson.blocks.find(b => b.id === id)).filter(Boolean);
   lesson.blocks = reordered;
-  await saveLesson(lesson.id, lesson);
+  await saveLesson(lesson.id, lesson, req.session.schoolId);
 
   res.json({ success: true, blocks: lesson.blocks });
 });
@@ -500,7 +508,7 @@ router.put('/:id/blocks/reorder', async (req, res) => {
  * fullständig data, se listLessons i src/db/lessonStore.js.
  */
 router.get('/', async (req, res) => {
-  const list = await listLessons();
+  const list = await listLessons({ schoolId: req.session.schoolId });
   res.json({ success: true, lessons: list });
 });
 
@@ -509,7 +517,7 @@ router.get('/', async (req, res) => {
  * Arkiverar en lektion (status = 'archived') utan att radera den.
  */
 router.put('/:id/archive', async (req, res) => {
-  await archiveLesson(req.params.id);
+  await archiveLesson(req.params.id, req.session.schoolId);
   res.json({ success: true });
 });
 
