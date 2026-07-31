@@ -14,8 +14,11 @@
   }
   body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-height:100vh;}
 
+  /* ── LOGIN ── */
+  #login{display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;padding:24px;gap:16px;}
+
   /* ── SETUP ── */
-  #setup{display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;padding:24px;gap:16px;}
+  #setup{display:none;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;padding:24px;gap:16px;}
   .logo{font-family:'Playfair Display',serif;font-size:2rem;}
   .logo span{color:var(--accent);}
   .tagline{color:var(--muted);font-size:.85rem;text-align:center;}
@@ -223,11 +226,29 @@
 </head>
 <body>
 
+<!-- LOGIN -->
+<div id="login">
+  <div class="logo">Andvo <span>Edu</span></div>
+  <div class="tagline">Andvo Edu — Logga in</div>
+  <form class="card" onsubmit="event.preventDefault(); submitLogin();">
+    <label>Användarnamn</label>
+    <input type="text" id="loginUsername" autocomplete="username"/>
+    <label>Lösenord</label>
+    <input type="password" id="loginPassword" autocomplete="current-password"/>
+    <div class="error-box" id="loginErrBox"></div>
+    <button type="submit" class="genbtn">Logga in</button>
+  </form>
+</div>
+
 <!-- SETUP -->
 <div id="setup">
   <div class="logo">Andvo <span>Edu</span></div>
   <div class="tagline">AI-genererad lektion för svenska skolor</div>
-  <button type="button" class="hbtn" onclick="openLessonsList()">📚 Mina lektioner</button>
+  <div style="display:flex;align-items:center;gap:10px;">
+    <button type="button" class="hbtn" onclick="openLessonsList()">📚 Mina lektioner</button>
+    <span id="currentSchoolName" style="font-size:12px;color:var(--muted);"></span>
+    <button type="button" class="hbtn" onclick="logout()">🚪 Logga ut</button>
+  </div>
   <div class="card">
     <label>Ämne</label>
     <select id="subject">
@@ -363,9 +384,10 @@ let lessonId = null;
 let lesson = null;
 let lessonStatus = 'draft';
 let currentBlockIdx = 0;
+let currentSchool = null;
 
 /* ══════════════════ SKÄRMNAVIGERING & URL-SYNK (?lesson=<id>) ══════════════════ */
-const SCREEN_IDS = ['setup', 'loading', 'materialReading', 'materialConfirm', 'lessonOpening', 'lessonsList', 'editor'];
+const SCREEN_IDS = ['login', 'setup', 'loading', 'materialReading', 'materialConfirm', 'lessonOpening', 'lessonsList', 'editor'];
 
 function showScreen(id) {
   SCREEN_IDS.forEach(s => {
@@ -437,9 +459,93 @@ async function openLessonById(id) {
 async function initFromUrl() {
   const params = new URLSearchParams(window.location.search);
   const id = params.get('lesson');
-  if (id) await openLessonById(id);
+  if (id) {
+    await openLessonById(id);
+  } else {
+    showScreen('setup');
+  }
 }
-document.addEventListener('DOMContentLoaded', initFromUrl);
+
+function updateSchoolName() {
+  const el = document.getElementById('currentSchoolName');
+  if (el) el.textContent = currentSchool ? currentSchool.name : '';
+}
+
+/**
+ * Körs vid sidladdning. Kollar inloggningsstatus mot GET /api/auth/me
+ * innan resten av appen (initFromUrl) får köra — en utloggad besökare
+ * ska aldrig se setup/editor-skärmarna, bara login.
+ */
+async function initApp() {
+  try {
+    const res = await fetch('/api/auth/me');
+    if (res.status === 401) {
+      showScreen('login');
+      return;
+    }
+    const data = await res.json();
+    currentSchool = data.school;
+    updateSchoolName();
+    await initFromUrl();
+  } catch (e) {
+    showScreen('login');
+  }
+}
+document.addEventListener('DOMContentLoaded', initApp);
+
+/**
+ * Loggar in via formuläret på login-skärmen. Vid fel visas ett meddelande
+ * i loginErrBox och användaren stannar kvar på login-skärmen.
+ */
+async function submitLogin() {
+  const username = document.getElementById('loginUsername').value.trim();
+  const password = document.getElementById('loginPassword').value;
+  const errBox = document.getElementById('loginErrBox');
+  errBox.style.display = 'none';
+
+  if (!username || !password) {
+    errBox.textContent = 'Fyll i användarnamn och lösenord';
+    errBox.style.display = 'block';
+    return;
+  }
+
+  try {
+    const res = await fetch('/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password })
+    });
+    const data = await res.json();
+    if (!res.ok || !data.success) {
+      errBox.textContent = 'Fel användarnamn eller lösenord';
+      errBox.style.display = 'block';
+      return;
+    }
+    currentSchool = data.school;
+    updateSchoolName();
+    await initFromUrl();
+  } catch (e) {
+    errBox.textContent = 'Kunde inte logga in, försök igen';
+    errBox.style.display = 'block';
+  }
+}
+
+/**
+ * Loggar ut den inloggade skolan och återgår till login-skärmen.
+ */
+async function logout() {
+  try {
+    await fetch('/api/auth/logout', { method: 'POST' });
+  } catch (e) {
+    // Ignorerar nätverksfel — sessionen rensas lokalt oavsett.
+  }
+  currentSchool = null;
+  document.getElementById('loginUsername').value = '';
+  document.getElementById('loginPassword').value = '';
+  const errBox = document.getElementById('loginErrBox');
+  if (errBox) errBox.style.display = 'none';
+  showScreen('login');
+}
 
 window.addEventListener('popstate', () => {
   const params = new URLSearchParams(window.location.search);
