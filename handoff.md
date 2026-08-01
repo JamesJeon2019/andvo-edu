@@ -533,6 +533,9 @@ and voice playback + YouTube links are supported per block.
   через сайдбар, ни через пагинацию, обычный защищённый учительский
   поток не затронут. Весь план "Доступ учеников к урокам" из
   предыдущей записи в Next steps — ЗАВЕРШЁН.
+- Render upgraded from free tier to paid Starter tier (~$7/month) —
+  spin-down after inactivity eliminated, site responds instantly
+  regardless of time since last request.
 
 ## Next steps
 
@@ -605,17 +608,3 @@ and voice playback + YouTube links are supported per block.
   timeout, both via `AbortController` — lowered from 5s+5s, see "What
   was completed" above). Consider shortening further if this still
   generates slowness complaints.
-- Render's free-tier web service spins down after 15 minutes of
-  inactivity; the next request then pays a 30-60s cold-start penalty. At
-  real usage — teachers hitting the site from different devices at
-  different times of day — this will look like "the site is down", not
-  "the site is slow". Deliberately deferred: real school usage doesn't
-  start until 2026-08-10, so there's time. Decision (already made, no
-  code/infra change yet): upgrade to Render's paid Starter tier (~$7/
-  month), which removes the spin-down entirely — this is settled, not
-  just a recommendation, but no specific date/moment has been chosen for
-  when to actually click the upgrade in Render's dashboard; just needs
-  doing before 2026-08-10. Do NOT paper over this with an external
-  keep-alive ping in the meantime — that doesn't avoid the problem, it
-  just burns through the free tier's 750 hours/month workspace-wide limit
-  faster.
